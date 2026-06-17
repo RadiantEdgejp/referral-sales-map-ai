@@ -15,22 +15,15 @@ import FilterChip from '../components/FilterChip';
 import PersonCard from '../components/PersonCard';
 import { getPeople } from '../storage/personStorage';
 import type { ScreenProps } from '../types/navigation';
-import type { Person, PersonCategory } from '../types/person';
+import type { Person } from '../types/person';
 
-const CATEGORIES: Array<'すべて' | PersonCategory> = [
-  'すべて',
-  '顧客候補',
-  '紹介元候補',
-  '紹介先候補',
-  '情報源候補',
-  '将来候補',
-];
+type HomeTab = 'home' | 'people';
 
 export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
   const [people, setPeople] = useState<Person[]>([]);
   const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<'すべて' | PersonCategory>('すべて');
   const [industry, setIndustry] = useState('すべて');
+  const [activeTab, setActiveTab] = useState<HomeTab>('home');
 
   const loadPeople = useCallback(async () => {
     setPeople(await getPeople());
@@ -47,6 +40,16 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
     return ['すべて', ...unique];
   }, [people]);
 
+  const targetPeople = useMemo(() => {
+    return [...people]
+      .sort((a, b) => {
+        const aDate = a.nextContactAt ? new Date(a.nextContactAt).getTime() : Number.MAX_SAFE_INTEGER;
+        const bDate = b.nextContactAt ? new Date(b.nextContactAt).getTime() : Number.MAX_SAFE_INTEGER;
+        return aDate - bDate;
+      })
+      .slice(0, 3);
+  }, [people]);
+
   const filteredPeople = useMemo(() => {
     const normalized = query.trim().toLowerCase();
 
@@ -57,12 +60,15 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           .join(' ')
           .toLowerCase()
           .includes(normalized);
-      const matchesCategory = category === 'すべて' || person.categories.includes(category);
       const matchesIndustry = industry === 'すべて' || person.industry === industry;
 
-      return matchesQuery && matchesCategory && matchesIndustry;
+      return matchesQuery && matchesIndustry;
     });
-  }, [category, industry, people, query]);
+  }, [industry, people, query]);
+
+  const openPerson = (person: Person) => {
+    navigation.navigate('PersonDetail', { personId: person.id });
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -72,72 +78,86 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           <Text style={styles.subcopy}>出会いを営業資産に変える</Text>
         </View>
 
-        <View style={styles.todayCard}>
-          <Text style={styles.todayTitle}>今日やること</Text>
-          <Text style={styles.todayMain}>
-            {people.length > 0
-              ? '次回連絡が近い人を確認して、軽い近況LINEを1通送る'
-              : 'まずはサンプル人物を追加して、人脈カードの流れを確認する'}
-          </Text>
-          <Text style={styles.todaySub}>売り込む前に、相手の課題を1つだけ聞く</Text>
-        </View>
-
-        <View style={styles.searchBox}>
-          <Search color="#64748B" size={20} />
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="名前・業種・分類・メモで検索"
-            placeholderTextColor="#94A3B8"
-            style={styles.searchInput}
+        <View style={styles.tabBar}>
+          <TabButton label="ホーム" selected={activeTab === 'home'} onPress={() => setActiveTab('home')} />
+          <TabButton
+            label="人脈カード一覧"
+            selected={activeTab === 'people'}
+            onPress={() => setActiveTab('people')}
           />
         </View>
 
-        <Text style={styles.filterTitle}>分類</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
-          {CATEGORIES.map((item) => (
-            <FilterChip
-              key={item}
-              label={item}
-              selected={category === item}
-              onPress={() => setCategory(item)}
-            />
-          ))}
-        </ScrollView>
-
-        <Text style={styles.filterTitle}>業種</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
-          {industries.map((item) => (
-            <FilterChip
-              key={item}
-              label={item}
-              selected={industry === item}
-              onPress={() => setIndustry(item)}
-            />
-          ))}
-        </ScrollView>
-
-        <View style={styles.summary}>
-          <Text style={styles.summaryText}>人脈カード {filteredPeople.length}件</Text>
-        </View>
-
-        <FlatList
-          data={filteredPeople}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <PersonCard
-              person={item}
-              onPress={() => navigation.navigate('PersonDetail', { personId: item.id })}
-            />
-          )}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>まだ人脈カードがありません</Text>
-              <Text style={styles.emptyText}>人物追加からサンプル入力を試してみてください。</Text>
+        {activeTab === 'home' ? (
+          <ScrollView contentContainerStyle={styles.homeContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.todayCard}>
+              <Text style={styles.todayTitle}>今日やること</Text>
+              <Text style={styles.todayMain}>
+                {people.length > 0
+                  ? '次回連絡が近い人を確認して、軽い近況LINEを1通送る'
+                  : 'まずはサンプル人物を追加して、人脈カードの流れを確認する'}
+              </Text>
+              <Text style={styles.todaySub}>売り込む前に、相手の課題を1つだけ聞く</Text>
             </View>
-          }
-          contentContainerStyle={styles.listContent}
-        />
+
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>今日の対象人物</Text>
+              <Text style={styles.sectionMeta}>{targetPeople.length}件</Text>
+            </View>
+
+            {targetPeople.length > 0 ? (
+              targetPeople.map((person) => (
+                <PersonCard key={person.id} person={person} onPress={() => openPerson(person)} />
+              ))
+            ) : (
+              <View style={styles.empty}>
+                <Text style={styles.emptyTitle}>今日動く対象がまだありません</Text>
+                <Text style={styles.emptyText}>人物追加からサンプル入力を試すと、ここに対象人物が表示されます。</Text>
+              </View>
+            )}
+          </ScrollView>
+        ) : (
+          <View style={styles.listPane}>
+            <View style={styles.searchBox}>
+              <Search color="#64748B" size={20} />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="名前・業種・分類・メモ・次アクションで検索"
+                placeholderTextColor="#94A3B8"
+                style={styles.searchInput}
+              />
+            </View>
+
+            <Text style={styles.filterTitle}>業種</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
+              {industries.map((item) => (
+                <FilterChip
+                  key={item}
+                  label={item}
+                  selected={industry === item}
+                  onPress={() => setIndustry(item)}
+                />
+              ))}
+            </ScrollView>
+
+            <View style={styles.summary}>
+              <Text style={styles.summaryText}>人脈カード {filteredPeople.length}件</Text>
+            </View>
+
+            <FlatList
+              data={filteredPeople}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => <PersonCard person={item} onPress={() => openPerson(item)} />}
+              ListEmptyComponent={
+                <View style={styles.empty}>
+                  <Text style={styles.emptyTitle}>人脈カードが見つかりません</Text>
+                  <Text style={styles.emptyText}>検索条件を変えるか、人物追加からカードを作ってください。</Text>
+                </View>
+              }
+              contentContainerStyle={styles.listContent}
+            />
+          </View>
+        )}
 
         <View style={styles.actions}>
           <Pressable style={[styles.actionButton, styles.coachButton]} onPress={() => navigation.navigate('CoachChat')}>
@@ -151,6 +171,22 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
         </View>
       </View>
     </SafeAreaView>
+  );
+}
+
+function TabButton({
+  label,
+  selected,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={[styles.tabButton, selected && styles.tabButtonSelected]} onPress={onPress}>
+      <Text style={[styles.tabButtonText, selected && styles.tabButtonTextSelected]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -178,13 +214,44 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: 4,
   },
+  tabBar: {
+    backgroundColor: '#E2E8F0',
+    borderRadius: 8,
+    flexDirection: 'row',
+    gap: 4,
+    padding: 4,
+    marginBottom: 12,
+  },
+  tabButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabButtonSelected: {
+    backgroundColor: '#FFFFFF',
+  },
+  tabButtonText: {
+    color: '#64748B',
+    fontWeight: '900',
+  },
+  tabButtonTextSelected: {
+    color: '#153E75',
+  },
+  homeContent: {
+    paddingBottom: 96,
+  },
+  listPane: {
+    flex: 1,
+  },
   todayCard: {
     backgroundColor: '#FEF3C7',
     borderWidth: 1,
     borderColor: '#FDE68A',
     borderRadius: 8,
     padding: 14,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   todayTitle: {
     color: '#92400E',
@@ -203,6 +270,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     marginTop: 6,
+  },
+  sectionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  sectionTitle: {
+    color: '#0F172A',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  sectionMeta: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '900',
   },
   searchBox: {
     flexDirection: 'row',
