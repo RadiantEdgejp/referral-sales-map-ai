@@ -71,6 +71,22 @@ npx.cmd expo start
 
 スマホでExpo Goを開き、QRコードを読み込むとアプリを確認できます。
 
+## PCブラウザで確認する方法
+
+PCでも画面を確認したい場合は、Web版として起動します。
+
+```bash
+npx expo start --web
+```
+
+PowerShellで `npx` が止まる場合はこちらです。
+
+```powershell
+npx.cmd expo start --web
+```
+
+起動後、ブラウザで表示されたURLを開いてください。通常は `http://localhost:8081` または表示されたポート番号のURLです。
+
 ## 使い方
 
 1. ホーム画面で「人物追加」を押す
