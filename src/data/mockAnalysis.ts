@@ -1,11 +1,21 @@
 import type { PersonAnalysis } from '../types/person';
 
 export function createMockAnalysis(_memo: string): PersonAnalysis {
+  const recommended = new Date();
+  recommended.setDate(recommended.getDate() + 3);
+  recommended.setHours(9, 0, 0, 0);
+
   return {
     name: '田中さん',
     industry: '美容サロン経営',
     relationship: '交流会で会った',
     categories: ['紹介元候補', '情報源候補'],
+    temperatureScore: 68,
+    customerPotential: 32,
+    referrerPotential: 82,
+    referralTargetPotential: 44,
+    informationValue: 78,
+    futurePotential: 65,
     openingTalk: '美容業界の採用・集客・経営者人脈について聞く',
     nextQuestion:
       '美容系の経営者さんって、最近は集客より採用の方が大変だったりしますか？',
@@ -24,6 +34,7 @@ export function createMockAnalysis(_memo: string): PersonAnalysis {
       '田中さん\n\n先日は交流会でお話しさせていただき、ありがとうございました。\n美容業界の経営者の方とお話しする機会が増えており、最近のサロン経営では採用や集客についてどのようなお悩みが多いのか、少し勉強させていただきたいと思っています。\n\nもし差し支えなければ、また短時間で情報交換させていただけますと幸いです。\nどうぞよろしくお願いいたします。',
     cautions:
       'いきなり保険の話をすると売り込み感が出る可能性がある。まずは相手の業界理解と情報交換を優先する。',
+    recommendedNextContactAt: recommended.toISOString(),
   };
 }
 

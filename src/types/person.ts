@@ -10,6 +10,12 @@ export type PersonAnalysis = {
   industry: string;
   relationship: string;
   categories: PersonCategory[];
+  temperatureScore: number;
+  customerPotential: number;
+  referrerPotential: number;
+  referralTargetPotential: number;
+  informationValue: number;
+  futurePotential: number;
   openingTalk: string;
   nextQuestion: string;
   goal: string;
@@ -18,6 +24,7 @@ export type PersonAnalysis = {
   lineMessage: string;
   emailMessage: string;
   cautions: string;
+  recommendedNextContactAt: string;
 };
 
 export type Person = PersonAnalysis & {
@@ -26,4 +33,5 @@ export type Person = PersonAnalysis & {
   createdAt: string;
   nextContactAt?: string;
   notificationId?: string;
+  additionalMemo?: string;
 };

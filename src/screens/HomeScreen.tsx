@@ -53,7 +53,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
     return people.filter((person) => {
       const matchesQuery =
         !normalized ||
-        [person.name, person.industry, person.categories.join(' '), person.rawMemo]
+        [person.name, person.industry, person.categories.join(' '), person.rawMemo, person.nextAction]
           .join(' ')
           .toLowerCase()
           .includes(normalized);
@@ -67,6 +67,21 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
+        <View style={styles.hero}>
+          <Text style={styles.appName}>紹介営業マップAI</Text>
+          <Text style={styles.subcopy}>出会いを営業資産に変える</Text>
+        </View>
+
+        <View style={styles.todayCard}>
+          <Text style={styles.todayTitle}>今日やること</Text>
+          <Text style={styles.todayMain}>
+            {people.length > 0
+              ? '次回連絡が近い人を確認して、軽い近況LINEを1通送る'
+              : 'まずはサンプル人物を追加して、人脈カードの流れを確認する'}
+          </Text>
+          <Text style={styles.todaySub}>売り込む前に、相手の課題を1つだけ聞く</Text>
+        </View>
+
         <View style={styles.searchBox}>
           <Search color="#64748B" size={20} />
           <TextInput
@@ -148,6 +163,46 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 16,
     paddingTop: 12,
+  },
+  hero: {
+    marginBottom: 12,
+  },
+  appName: {
+    color: '#0F172A',
+    fontSize: 26,
+    fontWeight: '900',
+  },
+  subcopy: {
+    color: '#64748B',
+    fontSize: 14,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  todayCard: {
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 8,
+    padding: 14,
+    marginBottom: 12,
+  },
+  todayTitle: {
+    color: '#92400E',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  todayMain: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '900',
+    lineHeight: 21,
+    marginTop: 6,
+  },
+  todaySub: {
+    color: '#92400E',
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 6,
   },
   searchBox: {
     flexDirection: 'row',

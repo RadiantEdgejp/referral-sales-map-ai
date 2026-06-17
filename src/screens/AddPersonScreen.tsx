@@ -46,6 +46,7 @@ export default function AddPersonScreen({ navigation }: ScreenProps<'AddPerson'>
       id: `${Date.now()}`,
       rawMemo: memo,
       createdAt: new Date().toISOString(),
+      nextContactAt: analysis.recommendedNextContactAt,
       ...analysis,
     });
 
@@ -59,6 +60,9 @@ export default function AddPersonScreen({ navigation }: ScreenProps<'AddPerson'>
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <Text style={styles.title}>人物を追加</Text>
+        <Text style={styles.subcopy}>覚えていることを雑に書くだけでOK</Text>
+
         <Text style={styles.label}>雑メモ</Text>
         <TextInput
           value={memo}
@@ -107,6 +111,17 @@ const styles = StyleSheet.create({
   container: {
     padding: 16,
     paddingBottom: 32,
+  },
+  title: {
+    color: '#0F172A',
+    fontSize: 24,
+    fontWeight: '900',
+  },
+  subcopy: {
+    color: '#64748B',
+    fontWeight: '800',
+    marginTop: 4,
+    marginBottom: 18,
   },
   label: {
     color: '#0F172A',

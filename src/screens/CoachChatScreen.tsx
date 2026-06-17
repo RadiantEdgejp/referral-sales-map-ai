@@ -17,6 +17,8 @@ import { getPeople } from '../storage/personStorage';
 import type { Person } from '../types/person';
 
 type CoachAnswer = ReturnType<typeof createCoachMockAnswer>;
+const SAMPLE_COACH_PROMPT =
+  '田中さんに美容サロン経営者を紹介してほしいです。まだ一回しか会っていません。今お願いしてもいいですか？';
 
 export default function CoachChatScreen() {
   const [people, setPeople] = useState<Person[]>([]);
@@ -40,6 +42,9 @@ export default function CoachChatScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <Text style={styles.title}>営業コーチ</Text>
+        <Text style={styles.subcopy}>営業の迷いを、次の行動に変える</Text>
+
         <Text style={styles.label}>関連人物</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.personRow}>
           <FilterChip
@@ -75,6 +80,16 @@ export default function CoachChatScreen() {
           textAlignVertical="top"
           style={styles.input}
         />
+
+        <Pressable
+          style={styles.sampleButton}
+          onPress={() => {
+            setProblem(SAMPLE_COACH_PROMPT);
+            setAnswer(null);
+          }}
+        >
+          <Text style={styles.sampleButtonText}>サンプル相談を入れる</Text>
+        </Pressable>
 
         <Pressable style={styles.submitButton} onPress={submit}>
           <Send color="#FFFFFF" size={18} />
@@ -114,6 +129,17 @@ const styles = StyleSheet.create({
   container: {
     padding: 16,
     paddingBottom: 32,
+  },
+  title: {
+    color: '#0F172A',
+    fontSize: 24,
+    fontWeight: '900',
+  },
+  subcopy: {
+    color: '#64748B',
+    fontWeight: '800',
+    marginTop: 4,
+    marginBottom: 18,
   },
   label: {
     color: '#0F172A',
@@ -155,6 +181,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     marginVertical: 14,
+  },
+  sampleButton: {
+    minHeight: 46,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#B8D4FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+    backgroundColor: '#EAF2FF',
+  },
+  sampleButtonText: {
+    color: '#153E75',
+    fontWeight: '900',
   },
   submitText: {
     color: '#FFFFFF',

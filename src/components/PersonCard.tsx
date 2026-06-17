@@ -27,8 +27,21 @@ export default function PersonCard({ person, onPress }: Props) {
         ))}
       </View>
 
+      <View style={styles.scoreRow}>
+        <Text style={styles.scoreLabel}>温度感スコア</Text>
+        <View style={styles.scoreTrack}>
+          <View style={[styles.scoreBar, { width: `${person.temperatureScore}%` }]} />
+        </View>
+        <Text style={styles.scoreValue}>{person.temperatureScore}</Text>
+      </View>
+
+      <Text style={styles.sectionLabel}>次アクション</Text>
       <Text style={styles.memo} numberOfLines={2}>
-        {person.rawMemo}
+        {person.nextAction}
+      </Text>
+      <Text style={styles.sectionLabel}>注意点</Text>
+      <Text style={styles.caution} numberOfLines={2}>
+        {person.cautions}
       </Text>
       <Text style={styles.next}>次回連絡: {formatDateTime(person.nextContactAt)}</Text>
     </Pressable>
@@ -83,7 +96,45 @@ const styles = StyleSheet.create({
   memo: {
     color: '#334155',
     lineHeight: 20,
+    marginTop: 3,
+  },
+  caution: {
+    color: '#7C2D12',
+    lineHeight: 20,
+    marginTop: 3,
+  },
+  sectionLabel: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '900',
     marginTop: 12,
+  },
+  scoreRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 14,
+  },
+  scoreLabel: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  scoreTrack: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#E2E8F0',
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  scoreBar: {
+    height: '100%',
+    backgroundColor: '#F59E0B',
+  },
+  scoreValue: {
+    color: '#0F172A',
+    fontSize: 12,
+    fontWeight: '900',
   },
   next: {
     color: '#B45309',
