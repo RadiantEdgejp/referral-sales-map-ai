@@ -1,0 +1,176 @@
+import { useEffect, useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { Send } from 'lucide-react-native';
+import FilterChip from '../components/FilterChip';
+import SectionCard from '../components/SectionCard';
+import { createCoachMockAnswer } from '../data/mockAnalysis';
+import { getPeople } from '../storage/personStorage';
+import type { Person } from '../types/person';
+
+type CoachAnswer = ReturnType<typeof createCoachMockAnswer>;
+
+export default function CoachChatScreen() {
+  const [people, setPeople] = useState<Person[]>([]);
+  const [selectedPersonId, setSelectedPersonId] = useState('none');
+  const [problem, setProblem] = useState('');
+  const [answer, setAnswer] = useState<CoachAnswer | null>(null);
+
+  useEffect(() => {
+    getPeople().then(setPeople);
+  }, []);
+
+  const submit = () => {
+    setAnswer(createCoachMockAnswer(problem));
+  };
+
+  const selectedPerson = people.find((person) => person.id === selectedPersonId);
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <Text style={styles.label}>関連人物</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.personRow}>
+          <FilterChip
+            label="指定なし"
+            selected={selectedPersonId === 'none'}
+            onPress={() => setSelectedPersonId('none')}
+          />
+          {people.map((person) => (
+            <FilterChip
+              key={person.id}
+              label={person.name}
+              selected={selectedPersonId === person.id}
+              onPress={() => setSelectedPersonId(person.id)}
+            />
+          ))}
+        </ScrollView>
+
+        {selectedPerson && (
+          <View style={styles.selectedBox}>
+            <Text style={styles.selectedText}>
+              {selectedPerson.name} / {selectedPerson.categories.join('、')}
+            </Text>
+          </View>
+        )}
+
+        <Text style={styles.label}>悩み</Text>
+        <TextInput
+          value={problem}
+          onChangeText={setProblem}
+          placeholder="例：この人に紹介依頼していい？ このLINE重い？"
+          placeholderTextColor="#94A3B8"
+          multiline
+          textAlignVertical="top"
+          style={styles.input}
+        />
+
+        <Pressable style={styles.submitButton} onPress={submit}>
+          <Send color="#FFFFFF" size={18} />
+          <Text style={styles.submitText}>相談を送信</Text>
+        </Pressable>
+
+        {answer && (
+          <SectionCard title="仮回答">
+            <AnswerItem index={1} title="結論" body={answer.conclusion} />
+            <AnswerItem index={2} title="理由" body={answer.reason} />
+            <AnswerItem index={3} title="科学的根拠" body={answer.evidence} />
+            <AnswerItem index={4} title="営業現場への翻訳" body={answer.translation} />
+            <AnswerItem index={5} title="次の行動" body={answer.nextAction} />
+          </SectionCard>
+        )}
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+function AnswerItem({ index, title, body }: { index: number; title: string; body: string }) {
+  return (
+    <View style={styles.answerItem}>
+      <Text style={styles.answerTitle}>
+        {index}. {title}
+      </Text>
+      <Text style={styles.answerBody}>{body}</Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
+  container: {
+    padding: 16,
+    paddingBottom: 32,
+  },
+  label: {
+    color: '#0F172A',
+    fontWeight: '900',
+    marginBottom: 8,
+    marginTop: 8,
+  },
+  personRow: {
+    flexGrow: 0,
+    marginBottom: 10,
+  },
+  selectedBox: {
+    backgroundColor: '#EAF2FF',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+  },
+  selectedText: {
+    color: '#153E75',
+    fontWeight: '800',
+  },
+  input: {
+    minHeight: 132,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D7DEE8',
+    borderRadius: 8,
+    padding: 14,
+    color: '#0F172A',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  submitButton: {
+    minHeight: 52,
+    borderRadius: 8,
+    backgroundColor: '#153E75',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginVertical: 14,
+  },
+  submitText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 16,
+  },
+  answerItem: {
+    marginBottom: 14,
+  },
+  answerTitle: {
+    color: '#153E75',
+    fontWeight: '900',
+    marginBottom: 4,
+  },
+  answerBody: {
+    color: '#334155',
+    lineHeight: 22,
+  },
+});
