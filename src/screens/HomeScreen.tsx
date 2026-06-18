@@ -192,10 +192,11 @@ function HomePane({
   return (
     <ScrollView contentContainerStyle={styles.homeContent} showsVerticalScrollIndicator={false}>
       <View style={styles.scoreGrid}>
-        <ScoreCard label="今日連絡すべき人" value="3人" tone="blue" />
-        <ScoreCard label="放置中の人脈" value="5人" tone="amber" />
+        <ScoreCard label="今日連絡" value="3人" tone="blue" />
+        <ScoreCard label="放置中" value="5人" tone="amber" />
         <ScoreCard label="紹介チャンス" value="2件" tone="green" />
         <ScoreCard label="未整理メモ" value="1件" tone="purple" />
+        <ScoreCard label="次アクション未設定" value="3人" tone="red" wide />
       </View>
 
       <Section title="今日の必達アクション" subtitle="朝と移動中にここだけ見れば、今日の動きが決まります。">
@@ -225,6 +226,7 @@ function HomePane({
         <AlertRow title="紹介元候補なのに紹介依頼ルート未作成" count="2人" onPress={onShowPeople} />
         <AlertRow title="将来候補なのに追客日未設定" count="4人" onPress={onShowPeople} />
         <AlertRow title="情報源候補なのに質問が未設定" count="1人" onPress={onShowPeople} />
+        <AlertRow title="最終接触から日数が空いている人" count="5人" onPress={onShowPeople} />
       </Section>
 
       <Section title="紹介チャンス" subtitle="誰に聞くか、誰をつなぐかを地図のように見ます。">
@@ -246,17 +248,25 @@ function HomePane({
           body="不動産営業。資産形成層の動きを聞ける可能性。"
           onPress={() => onOpenPerson(sato)}
         />
+        <ChanceCard
+          title="将来的に追うべき人"
+          name="山本さん"
+          body="今すぐ売り込まず、健康経営や固定費の情報提供から関係を温める。"
+          onPress={() => onOpenPerson(yamamoto)}
+        />
       </Section>
 
       <Section title="会話前ナビ" subtitle="初回面談・交流会・紹介前に見る切り口です。">
         <InfoBlock label="次に会う人" value="美容サロン経営者" />
+        <InfoBlock label="業種" value="美容・店舗経営" />
         <InfoBlock label="おすすめの切り口" value="採用・集客・スタッフ定着" />
         <InfoBlock label="最初の質問" value="最近、美容系って集客より採用の方が大変だったりします？" />
         <InfoBlock label="注意点" value="いきなり保険の話をしない。まず業界課題を聞く。" />
       </Section>
 
       <Section title="未整理メモ" subtitle="入力は軽く、整理はあとで。">
-        <Text style={styles.bodyText}>昨日の交流会メモが1件あります</Text>
+        <Text style={styles.bodyText}>昨日の交流会メモが1件あります。</Text>
+        <Text style={styles.bodyText}>まだカード化していないメモ：1件</Text>
         <Text style={styles.bodyText}>最近追加した人：田中さん、山本さん、佐藤さん</Text>
         <Pressable style={styles.secondaryCta} onPress={onShowPeople}>
           <Text style={styles.secondaryCtaText}>AIで整理する</Text>
@@ -390,9 +400,19 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
   );
 }
 
-function ScoreCard({ label, value, tone }: { label: string; value: string; tone: 'blue' | 'amber' | 'green' | 'purple' }) {
+function ScoreCard({
+  label,
+  value,
+  tone,
+  wide,
+}: {
+  label: string;
+  value: string;
+  tone: 'blue' | 'amber' | 'green' | 'purple' | 'red';
+  wide?: boolean;
+}) {
   return (
-    <View style={[styles.scoreCard, styles[`score_${tone}`]]}>
+    <View style={[styles.scoreCard, wide && styles.scoreCardWide, styles[`score_${tone}`]]}>
       <Text style={styles.scoreLabel}>{label}</Text>
       <Text style={styles.scoreValue}>{value}</Text>
     </View>
@@ -614,6 +634,9 @@ const styles = StyleSheet.create({
     padding: 12,
     width: '48.5%',
   },
+  scoreCardWide: {
+    width: '100%',
+  },
   score_blue: {
     backgroundColor: '#EFF6FF',
     borderColor: '#BFDBFE',
@@ -629,6 +652,10 @@ const styles = StyleSheet.create({
   score_purple: {
     backgroundColor: '#FAF5FF',
     borderColor: '#E9D5FF',
+  },
+  score_red: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
   },
   scoreLabel: {
     color: '#475569',
