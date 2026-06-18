@@ -1,9 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
 import {
   Alert,
   FlatList,
-  Modal,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -13,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { Bell, Bot, CalendarClock, Plus, RefreshCw, Search, UserPlus, X } from 'lucide-react-native';
+import { Bell, Bot, Plus, RefreshCw, Search, UserPlus } from 'lucide-react-native';
 import FilterChip from '../components/FilterChip';
 import PersonCard from '../components/PersonCard';
 import { MOCK_PEOPLE } from '../data/mockPeople';
@@ -21,17 +19,8 @@ import { getPeople, savePeople } from '../storage/personStorage';
 import type { ScreenProps } from '../types/navigation';
 import type { Person, PersonCategory } from '../types/person';
 
-type MainTab = 'home' | 'people';
+type MainTab = 'home' | 'people' | 'pre' | 'after' | 'line' | 'end';
 type SortMode = 'priority' | 'nextContact' | 'newest' | 'referrer';
-type ModalState =
-  | { type: 'none' }
-  | { type: 'action'; item: TodayAction }
-  | { type: 'schedule'; item: ScheduleItem }
-  | { type: 'route'; item: RouteItem }
-  | { type: 'meeting'; item: MeetingCheck }
-  | { type: 'postMeeting' }
-  | { type: 'notifications' }
-  | { type: 'addAction' };
 
 type TodayAction = {
   id: string;
@@ -42,41 +31,8 @@ type TodayAction = {
   shortReason: string;
   todayTodo: string;
   purpose: string;
-  whyToday: string;
-  evidence: string;
   question: string;
   message: string;
-};
-
-type ScheduleItem = {
-  id: string;
-  time: string;
-  personName: string;
-  personId: string;
-  title: string;
-  purpose: string;
-  kind: 'line' | 'meeting';
-};
-
-type RouteItem = {
-  id: string;
-  personName: string;
-  personId: string;
-  theme: string;
-  routeType: string;
-  current: string;
-  todayStep: string;
-  goal: string;
-  nextMove: string;
-};
-
-type MeetingCheck = {
-  personName: string;
-  personId: string;
-  time: string;
-  purpose: string;
-  question: string;
-  caution: string;
 };
 
 const CATEGORIES: Array<'すべて' | PersonCategory> = [
@@ -97,6 +53,48 @@ const SORTS: Array<{ label: string; value: SortMode }> = [
   { label: '紹介元可能性が高い順', value: 'referrer' },
 ];
 
+const NAV_ITEMS: Array<{ tab: MainTab; icon: string; hint: string }> = [
+  { tab: 'home', icon: '🏠', hint: 'ホーム' },
+  { tab: 'people', icon: '👥', hint: '人脈カード' },
+  { tab: 'pre', icon: '🧭', hint: '予定前ナビ' },
+  { tab: 'after', icon: '📝', hint: '後メモ' },
+  { tab: 'line', icon: '💬', hint: 'LINEチェック' },
+  { tab: 'end', icon: '🌙', hint: '終業後チェック' },
+];
+
+const SCREEN_META: Record<MainTab, { screenName: string; title: string; subcopy: string }> = {
+  home: {
+    screenName: 'ホーム',
+    title: '今日の営業地図',
+    subcopy: '営業開始前に、今日の方向性を確認する',
+  },
+  people: {
+    screenName: '人脈カード',
+    title: '営業資産データベース',
+    subcopy: '人物情報と営業データを育てる',
+  },
+  pre: {
+    screenName: '予定前ナビ',
+    title: '会う前の作戦確認',
+    subcopy: '目的・質問・注意点を先に決める',
+  },
+  after: {
+    screenName: '後メモ',
+    title: '会話を営業データにする',
+    subcopy: '聞いた回答から次アクションを作る',
+  },
+  line: {
+    screenName: 'LINEチェック',
+    title: '文面と会話データを確認',
+    subcopy: '送る前・返信後の情報を人脈カードへ戻す',
+  },
+  end: {
+    screenName: '終業後チェック',
+    title: '明日の営業地図へ反映',
+    subcopy: '漏れを確認して次の日の行動に変える',
+  },
+};
+
 const COACH_PREFILL =
   '今日の営業で、会話後に分類・ゴール・次回連絡日を決める精度を上げたいです。どう動けばいいですか？';
 
@@ -107,7 +105,6 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
   const [category, setCategory] = useState<'すべて' | PersonCategory>('すべて');
   const [industry, setIndustry] = useState('すべて');
   const [sortMode, setSortMode] = useState<SortMode>('priority');
-  const [modal, setModal] = useState<ModalState>({ type: 'none' });
   const [planUpdated, setPlanUpdated] = useState(false);
 
   const loadPeople = useCallback(async () => {
@@ -132,6 +129,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
     }, [loadPeople]),
   );
 
+  const actions = useMemo(() => createTodayActions(people), [people]);
   const filteredPeople = useMemo(() => {
     const normalized = query.trim().toLowerCase();
 
@@ -158,94 +156,31 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
       .sort((a, b) => sortPeople(a, b, sortMode));
   }, [category, industry, people, query, sortMode]);
 
-  const actions = useMemo(() => createTodayActions(people), [people]);
-  const schedules = useMemo(() => createScheduleItems(people), [people]);
-  const routes = useMemo(() => createRouteItems(people), [people]);
-  const meeting = useMemo(() => createMeetingCheck(people), [people]);
-
   const openPerson = (personId?: string) => {
     if (personId) {
       navigation.navigate('PersonDetail', { personId });
     }
   };
 
-  const complete = () => {
-    Alert.alert('完了にしました', '今日の行動から完了扱いにする想定のUIです。');
-    setModal({ type: 'none' });
-  };
-
-  const postpone = () => {
-    Alert.alert('延期しました', '明日以降の営業計画へ回す想定のUIです。');
-    setModal({ type: 'none' });
-  };
-
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={styles.screenName}>ホーム</Text>
-            <Text style={styles.appName}>今日の営業地図</Text>
-            <Text style={styles.dateText}>6月19日</Text>
-            <Text style={styles.subcopy}>営業開始前に、今日の方向性を確認する</Text>
-          </View>
-          <View style={styles.headerActions}>
-            <Pressable style={styles.iconButton} onPress={() => setModal({ type: 'notifications' })}>
-              <Bell color="#153E75" size={20} />
-            </Pressable>
-            <Pressable
-              style={styles.iconButton}
-              onPress={() => {
-                setPlanUpdated(true);
-                Alert.alert('今日の計画を更新しました', 'モックの行動リストを再生成しました。');
-              }}
-            >
-              <RefreshCw color="#153E75" size={20} />
-            </Pressable>
-            <Pressable style={styles.iconButtonDark} onPress={() => setModal({ type: 'addAction' })}>
-              <UserPlus color="#FFFFFF" size={20} />
-            </Pressable>
-          </View>
-        </View>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.tabBar}
-          contentContainerStyle={styles.tabBarContent}
-        >
-          <TabButton label="ホーム" selected={activeTab === 'home'} onPress={() => setActiveTab('home')} />
-          <TabButton label="人脈カード" selected={activeTab === 'people'} onPress={() => setActiveTab('people')} />
-          <TabButton
-            label="予定前ナビ"
-            selected={false}
-            onPress={() => navigation.navigate('PreMeetingNav', { personId: actions[0]?.personId, purpose: '初回接触' })}
-          />
-          <TabButton
-            label="後メモ"
-            selected={false}
-            onPress={() => navigation.navigate('AfterMemo', { personId: actions[0]?.personId })}
-          />
-          <TabButton
-            label="LINEチェック"
-            selected={false}
-            onPress={() => navigation.navigate('LineCheck', { personId: actions[0]?.personId })}
-          />
-          <TabButton label="終業後チェック" selected={false} onPress={() => navigation.navigate('EndOfDayCheck')} />
-        </ScrollView>
+        <Header
+          activeTab={activeTab}
+          planUpdated={planUpdated}
+          onNotice={() =>
+            Alert.alert('今日の通知', '10:00 山本さんに初回LINE\n13:00 佐藤さんと情報交換\n18:00 田中さんに近況LINE')
+          }
+          onRefresh={() => {
+            setPlanUpdated(true);
+            Alert.alert('今日の計画を更新しました', 'モックの営業地図を再生成しました。');
+          }}
+          onAdd={() => Alert.alert('今日やることを追加', '今日だけ実行する営業行動を追加する想定です。')}
+        />
 
         {activeTab === 'home' ? (
-          <HomePane
-            actions={actions}
-            schedules={schedules}
-            routes={routes}
-            meeting={meeting}
-            planUpdated={planUpdated}
-            onOpenModal={setModal}
-            onOpenPeople={() => setActiveTab('people')}
-            onOpenCoach={() => navigation.navigate('CoachChat', { initialPrompt: COACH_PREFILL })}
-          />
-        ) : (
+          <HomePane actions={actions} planUpdated={planUpdated} onOpenPerson={openPerson} />
+        ) : activeTab === 'people' ? (
           <PeoplePane
             people={filteredPeople}
             query={query}
@@ -259,7 +194,29 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             onOpenPerson={(person) => openPerson(person.id)}
             onAddPerson={() => navigation.navigate('AddPerson')}
           />
+        ) : activeTab === 'pre' ? (
+          <PreMeetingPane action={actions[0]} onAfter={() => setActiveTab('after')} onOpenPerson={openPerson} />
+        ) : activeTab === 'after' ? (
+          <AfterMemoPane personId={actions[0]?.personId} onLine={() => setActiveTab('line')} onEnd={() => setActiveTab('end')} onOpenPerson={openPerson} />
+        ) : activeTab === 'line' ? (
+          <LineCheckPane personId={actions[0]?.personId} onAfter={() => setActiveTab('after')} onOpenPerson={openPerson} />
+        ) : (
+          <EndOfDayPane onAfter={() => setActiveTab('after')} onHome={() => setActiveTab('home')} />
         )}
+
+        <View style={styles.bottomNav}>
+          {NAV_ITEMS.map((item) => (
+            <Pressable
+              key={item.tab}
+              accessibilityLabel={item.hint}
+              style={[styles.navIconButton, activeTab === item.tab && styles.navIconButtonActive]}
+              onPress={() => setActiveTab(item.tab)}
+            >
+              <Text style={styles.navIcon}>{item.icon}</Text>
+              {activeTab === item.tab ? <View style={styles.navDot} /> : null}
+            </Pressable>
+          ))}
+        </View>
 
         <View style={styles.floatingActions}>
           <Pressable
@@ -269,120 +226,120 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             <Bot color="#153E75" size={20} />
             <Text style={styles.coachButtonText}>営業コーチ</Text>
           </Pressable>
-          <Pressable style={[styles.floatingButton, styles.addButton]} onPress={() => setModal({ type: 'addAction' })}>
+          <Pressable style={[styles.floatingButton, styles.addButton]} onPress={() => Alert.alert('今日やることを追加', 'モック追加モーダルの想定です。')}>
             <Plus color="#FFFFFF" size={20} />
-            <Text style={styles.addButtonText}>今日やることを追加</Text>
+            <Text style={styles.addButtonText}>今日やること追加</Text>
           </Pressable>
         </View>
-
-        <HomeModal
-          modal={modal}
-          schedules={schedules}
-          onClose={() => setModal({ type: 'none' })}
-          onComplete={complete}
-          onPostpone={postpone}
-          onOpenPerson={openPerson}
-          onOpenCoach={() => navigation.navigate('CoachChat', { initialPrompt: COACH_PREFILL })}
-        />
       </View>
     </SafeAreaView>
   );
 }
 
+function Header({
+  activeTab,
+  planUpdated,
+  onNotice,
+  onRefresh,
+  onAdd,
+}: {
+  activeTab: MainTab;
+  planUpdated: boolean;
+  onNotice: () => void;
+  onRefresh: () => void;
+  onAdd: () => void;
+}) {
+  const meta = SCREEN_META[activeTab];
+
+  return (
+    <View style={styles.header}>
+      <View style={styles.headerText}>
+        <Text style={styles.screenName}>{meta.screenName}</Text>
+        <Text style={styles.appName}>{meta.title}</Text>
+        <Text style={styles.dateText}>6月19日</Text>
+        <Text style={styles.subcopy}>{meta.subcopy}</Text>
+        {planUpdated ? <Text style={styles.updatedNotice}>今日の計画を更新済み</Text> : null}
+      </View>
+      <View style={styles.headerActions}>
+        <Pressable style={styles.iconButton} onPress={onNotice}>
+          <Bell color="#153E75" size={20} />
+        </Pressable>
+        <Pressable style={styles.iconButton} onPress={onRefresh}>
+          <RefreshCw color="#153E75" size={20} />
+        </Pressable>
+        <Pressable style={styles.iconButtonDark} onPress={onAdd}>
+          <UserPlus color="#FFFFFF" size={20} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 function HomePane({
   actions,
-  schedules,
-  routes,
-  meeting,
   planUpdated,
-  onOpenModal,
-  onOpenPeople,
-  onOpenCoach,
+  onOpenPerson,
 }: {
   actions: TodayAction[];
-  schedules: ScheduleItem[];
-  routes: RouteItem[];
-  meeting: MeetingCheck;
   planUpdated: boolean;
-  onOpenModal: (modal: ModalState) => void;
-  onOpenPeople: () => void;
-  onOpenCoach: () => void;
+  onOpenPerson: (personId?: string) => void;
 }) {
   return (
-    <ScrollView contentContainerStyle={styles.homeContent} showsVerticalScrollIndicator={false}>
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Section title="今日の営業テーマ">
-        <InfoBlock label="テーマ" value="紹介直後の人を放置せず、初回接触を完了する" compact />
-        <InfoBlock label="今日の狙い" value="売り込みではなく、課題確認と関係構築を優先する" compact />
-        <InfoBlock label="今日の注意" value="紹介依頼を急がない。まず情報交換を挟む" compact />
-        <InfoBlock
-          label="根拠"
-          value="紹介直後は相手の記憶と紹介者の信頼が残るため、初回接触が遅いほど反応率が下がりやすい"
-          compact
-        />
-        {planUpdated ? <Text style={styles.updatedNotice}>今日の計画を更新済み</Text> : null}
+        <Info label="テーマ" value="紹介直後の人を放置せず、初回接触を完了する" compact />
+        <Info label="今日の狙い" value="売り込みではなく、課題確認と関係構築を優先する" compact />
+        <Info label="今日の注意" value="紹介依頼を急がない。まず情報交換を挟む" compact />
+        <Info label="根拠" value="紹介直後は記憶と信頼が残るため、初回接触が遅いほど反応率が下がりやすい" compact />
+        {planUpdated ? <Text style={styles.updatedNotice}>再生成された今日の営業地図です</Text> : null}
       </Section>
 
-      <Section title="今日の優先行動" subtitle="短い行カードで、誰に・なぜ・何をするかだけ確認します。">
+      <Section title="今日の優先行動" subtitle="誰に・なぜ・何をするかだけ確認します。">
         {actions.map((item) => (
-          <PriorityRow
-            key={item.id}
-            item={item}
-            onPress={() => onOpenModal({ type: 'action', item })}
-            onComplete={() => Alert.alert('完了にしました', `${item.personName}の行動を完了扱いにしました。`)}
-            onPostpone={() => Alert.alert('延期しました', `${item.personName}の行動を延期しました。`)}
-          />
+          <Pressable key={item.id} style={styles.priorityRow} onPress={() => onOpenPerson(item.personId)}>
+            <View style={styles.priorityHeader}>
+              <Text style={styles.priorityBadge}>{item.priority}</Text>
+              <Text style={styles.rowName}>{item.personName}</Text>
+              <Text style={styles.actionType}>{item.actionType}</Text>
+            </View>
+            <Text style={styles.shortReason}>{item.shortReason}</Text>
+            <Text style={styles.todoLine}>今日やること：{item.todayTodo}</Text>
+            <View style={styles.rowButtons}>
+              <MiniButton label="詳細" />
+              <MiniButton label="完了" />
+              <MiniButton label="延期" />
+            </View>
+          </Pressable>
         ))}
       </Section>
 
-      <Section title="今日の予定と通知" subtitle="今日通知が来る営業アクションだけを時系列で確認します。">
-        {schedules.map((item) => (
-          <ScheduleRow key={item.id} item={item} onPress={() => onOpenModal({ type: 'schedule', item })} />
-        ))}
+      <Section title="今日の予定と通知">
+        <Schedule time="10:00" title="山本さんに初回LINE" purpose="紹介直後の初回接触" />
+        <Schedule time="13:00" title="佐藤さんと情報交換" purpose="不動産顧客層の情報取得" />
+        <Schedule time="18:00" title="田中さんに近況LINE" purpose="美容業界の課題確認" />
       </Section>
 
       <Section title="今日進める営業ルート">
-        {routes.map((item) => (
-          <RouteRow key={item.id} item={item} onPress={() => onOpenModal({ type: 'route', item })} />
-        ))}
+        <Route title="山本さん → 本人の店舗課題確認" meta="顧客化ルート / 紹介直後 / 初回接触" />
+        <Route title="田中さん → 美容業界の経営者人脈" meta="紹介元化ルート / 情報交換前 / 採用・集客課題を聞く" />
+        <Route title="佐藤さん → 資産形成層の情報" meta="情報源化ルート / 質問準備 / 不動産顧客層の動きを聞く" />
       </Section>
 
       <Section title="会う前チェック">
-        <Pressable style={styles.prepCard} onPress={() => onOpenModal({ type: 'meeting', item: meeting })}>
-          <Text style={styles.rowName}>{meeting.personName}</Text>
-          <Text style={styles.rowMeta}>{meeting.time} 情報交換</Text>
-          <InfoBlock label="目的" value={meeting.purpose} compact />
-          <InfoBlock label="最初の質問" value={meeting.question} compact />
-          <InfoBlock label="注意" value={meeting.caution} compact />
-          <Text style={styles.linkText}>商談前ナビを開く</Text>
-        </Pressable>
+        <Info label="佐藤さん" value="13:00 情報交換" />
+        <Info label="目的" value="不動産顧客層の動きを聞く" />
+        <Info label="最初の質問" value="最近、不動産を検討する方って、投資目的と自宅目的だとどちらが多いですか？" />
+        <Info label="注意" value="一方的に聞くだけで終わらない。情報交換の形にする。" />
       </Section>
 
       <Section title="会った後に処理するもの">
-        <Text style={styles.bodyText}>今日、記録が必要になる予定：</Text>
-        <PostMeetingLine title="佐藤さん" body="13:00の情報交換後にメモ入力" />
-        <PostMeetingLine title="山本さん" body="返信が来たら分類と次回連絡日を更新" />
-        <Pressable style={styles.secondaryCta} onPress={() => onOpenModal({ type: 'postMeeting' })}>
-          <Text style={styles.secondaryCtaText}>商談後メモを開く</Text>
-        </Pressable>
+        <Route title="佐藤さん" meta="13:00の情報交換後にメモ入力" />
+        <Route title="山本さん" meta="返信が来たら分類と次回連絡日を更新" />
       </Section>
 
       <Section title="今日の営業コーチ指摘">
-        <InfoBlock
-          label="今週の傾向"
-          value="初回接触はできていますが、会話後に次アクションを決める数が少ないです。"
-        />
-        <InfoBlock
-          label="今日の改善"
-          value="会話した人は必ず「分類・ゴール・次回連絡日」を決めて終える。"
-        />
-        <InfoBlock
-          label="根拠"
-          value="会話直後に記録しないと、相手の課題・温度感・紹介可能性の情報が落ちやすい。記憶が新しいうちに次アクションを固定することで、追客漏れを減らせる。"
-        />
-        <Pressable style={styles.primaryCta} onPress={onOpenCoach}>
-          <Bot color="#FFFFFF" size={18} />
-          <Text style={styles.primaryCtaText}>営業コーチに相談する</Text>
-        </Pressable>
+        <Info label="今週の傾向" value="初回接触はできていますが、会話後に次アクションを決める数が少ないです。" />
+        <Info label="今日の改善" value="会話した人は必ず「分類・ゴール・次回連絡日」を決めて終える。" />
       </Section>
     </ScrollView>
   );
@@ -471,259 +428,163 @@ function PeoplePane({
           </Pressable>
         </View>
       }
-      contentContainerStyle={styles.listContent}
+      contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     />
   );
 }
 
-function HomeModal({
-  modal,
-  schedules,
-  onClose,
-  onComplete,
-  onPostpone,
+function PreMeetingPane({
+  action,
+  onAfter,
   onOpenPerson,
-  onOpenCoach,
 }: {
-  modal: ModalState;
-  schedules: ScheduleItem[];
-  onClose: () => void;
-  onComplete: () => void;
-  onPostpone: () => void;
+  action?: TodayAction;
+  onAfter: () => void;
   onOpenPerson: (personId?: string) => void;
-  onOpenCoach: () => void;
-}) {
-  const visible = modal.type !== 'none';
-
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.modalBackdrop}>
-        <View style={styles.modalCard}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{getModalTitle(modal)}</Text>
-            <Pressable style={styles.closeButton} onPress={onClose}>
-              <X color="#0F172A" size={20} />
-            </Pressable>
-          </View>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {modal.type === 'action' ? (
-              <ActionDetail item={modal.item} onComplete={onComplete} onPostpone={onPostpone} onOpenPerson={onOpenPerson} onOpenCoach={onOpenCoach} />
-            ) : null}
-            {modal.type === 'schedule' ? (
-              <ScheduleDetail item={modal.item} onOpenPerson={onOpenPerson} onClose={onClose} />
-            ) : null}
-            {modal.type === 'route' ? (
-              <RouteDetail item={modal.item} onOpenPerson={onOpenPerson} onOpenCoach={onOpenCoach} onClose={onClose} />
-            ) : null}
-            {modal.type === 'meeting' ? <MeetingDetail item={modal.item} onClose={onClose} /> : null}
-            {modal.type === 'postMeeting' ? <PostMeetingDetail onClose={onClose} /> : null}
-            {modal.type === 'notifications' ? (
-              <NotificationDetail schedules={schedules} onSelect={(item) => Alert.alert(item.title, item.purpose)} />
-            ) : null}
-            {modal.type === 'addAction' ? <AddActionDetail onClose={onClose} /> : null}
-          </ScrollView>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-function ActionDetail({
-  item,
-  onComplete,
-  onPostpone,
-  onOpenPerson,
-  onOpenCoach,
-}: {
-  item: TodayAction;
-  onComplete: () => void;
-  onPostpone: () => void;
-  onOpenPerson: (personId?: string) => void;
-  onOpenCoach: () => void;
 }) {
   return (
-    <>
-      <InfoBlock label="今日の目的" value={item.purpose} />
-      <InfoBlock label="なぜ今日やるのか" value={item.whyToday} />
-      <InfoBlock label="科学的根拠" value={item.evidence} />
-      <InfoBlock label="聞く質問" value={item.question} />
-      <InfoBlock label="送る文" value={item.message} />
-      <View style={styles.modalButtonGrid}>
-        <ModalButton label="完了" primary onPress={onComplete} />
-        <ModalButton label="延期" onPress={onPostpone} />
-        <ModalButton label="人物詳細を見る" onPress={() => onOpenPerson(item.personId)} />
-        <ModalButton label="営業コーチに相談" onPress={onOpenCoach} />
-      </View>
-    </>
-  );
-}
-
-function ScheduleDetail({
-  item,
-  onOpenPerson,
-  onClose,
-}: {
-  item: ScheduleItem;
-  onOpenPerson: (personId?: string) => void;
-  onClose: () => void;
-}) {
-  return (
-    <>
-      <InfoBlock label="時間" value={item.time} />
-      <InfoBlock label="人物" value={item.personName} />
-      <InfoBlock label="目的" value={item.purpose} />
-      <View style={styles.modalButtonGrid}>
-        <ModalButton label={item.kind === 'meeting' ? '商談前ナビを開く' : '送る文を見る'} primary onPress={() => Alert.alert(item.title, item.purpose)} />
-        <ModalButton label="人物詳細を見る" onPress={() => onOpenPerson(item.personId)} />
-        <ModalButton label="閉じる" onPress={onClose} />
-      </View>
-    </>
-  );
-}
-
-function RouteDetail({
-  item,
-  onOpenPerson,
-  onOpenCoach,
-  onClose,
-}: {
-  item: RouteItem;
-  onOpenPerson: (personId?: string) => void;
-  onOpenCoach: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <>
-      <InfoBlock label="このルートのゴール" value={item.goal} />
-      <InfoBlock label="現在地" value={item.current} />
-      <InfoBlock label="今日進める段階" value={item.todayStep} />
-      <InfoBlock label="次の一手" value={item.nextMove} />
-      <View style={styles.modalButtonGrid}>
-        <ModalButton label="関連人物を見る" primary onPress={() => onOpenPerson(item.personId)} />
-        <ModalButton label="商談前ナビを開く" onPress={onClose} />
-        <ModalButton label="営業コーチに相談" onPress={onOpenCoach} />
-      </View>
-    </>
-  );
-}
-
-function MeetingDetail({ item, onClose }: { item: MeetingCheck; onClose: () => void }) {
-  return (
-    <>
-      <InfoBlock label="目的" value={item.purpose} />
-      <InfoBlock label="最初の質問" value={item.question} />
-      <InfoBlock label="注意" value={item.caution} />
-      <ModalButton label="商談前ナビを開く" primary onPress={onClose} />
-    </>
-  );
-}
-
-function PostMeetingDetail({ onClose }: { onClose: () => void }) {
-  return (
-    <>
-      <InfoBlock label="話した内容" value="今日の商談後に入力" />
-      <InfoBlock label="相手の課題" value="採用・集客・資産形成などを記録" />
-      <InfoBlock label="分類" value="顧客候補 / 紹介元候補 / 情報源候補を更新" />
-      <InfoBlock label="ゴール" value="次回連絡、紹介依頼、情報交換などを固定" />
-      <InfoBlock label="次アクション" value="次に何を送るか、何を聞くかを決める" />
-      <InfoBlock label="次回連絡日" value="通知対象にする日時を設定" />
-      <InfoBlock label="注意点" value="売り込み感、紹介依頼の早さ、相手の温度感を記録" />
-      <ModalButton label="メモ入力を開始" primary onPress={onClose} />
-    </>
-  );
-}
-
-function NotificationDetail({ schedules, onSelect }: { schedules: ScheduleItem[]; onSelect: (item: ScheduleItem) => void }) {
-  return (
-    <>
-      {schedules.map((item) => (
-        <Pressable key={item.id} style={styles.notificationRow} onPress={() => onSelect(item)}>
-          <Text style={styles.notificationTime}>{item.time}</Text>
-          <View style={styles.notificationBody}>
-            <Text style={styles.rowName}>{item.title}</Text>
-            <Text style={styles.rowMeta}>目的：{item.purpose}</Text>
-          </View>
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <Section title="予定前ナビ" subtitle="人脈カード・過去メモ・LINE情報を参照して、今日の質問を決めます。">
+        <Info label="今日会う人" value={action?.personName ?? '山本さん'} />
+        <Info label="目的" value={action?.actionType ?? '初回接触'} />
+        <Text style={styles.inputLabel}>追加メモ</Text>
+        <TextInput
+          placeholder="今日聞きたいこと、相手の返信、紹介者情報など"
+          placeholderTextColor="#94A3B8"
+          multiline
+          textAlignVertical="top"
+          style={styles.compactInput}
+        />
+      </Section>
+      <Section title="今日のナビ">
+        <Info label="今日の目的" value={action?.purpose ?? '相手の課題と次の接点を明確にする'} />
+        <Info label="聞くべき質問" value="最近、採用と集客どちらが大変ですか？\n周りの経営者も同じ悩みを持っていますか？" />
+        <Info label="売るべきか、聞くべきか" value="今日は売るより聞く。情報交換を優先する。" />
+      </Section>
+      <View style={styles.inlineActions}>
+        <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(action?.personId)}>
+          <Text style={styles.secondaryCtaText}>人脈カードを見る</Text>
         </Pressable>
-      ))}
-    </>
+        <Pressable style={styles.primaryCta} onPress={onAfter}>
+          <Text style={styles.primaryCtaText}>後メモへ進む</Text>
+        </Pressable>
+      </View>
+    </ScrollView>
   );
 }
 
-function AddActionDetail({ onClose }: { onClose: () => void }) {
-  return (
-    <>
-      <InfoBlock label="追加する想定" value="今日だけ実行する営業行動を追加します。" />
-      <InfoBlock label="例" value="紹介直後の人に初回LINE / 商談前の質問確認 / 会話後メモ入力" />
-      <ModalButton label="今日やることを追加" primary onPress={onClose} />
-    </>
-  );
-}
-
-function PriorityRow({
-  item,
-  onPress,
-  onComplete,
-  onPostpone,
+function AfterMemoPane({
+  personId,
+  onLine,
+  onEnd,
+  onOpenPerson,
 }: {
-  item: TodayAction;
-  onPress: () => void;
-  onComplete: () => void;
-  onPostpone: () => void;
+  personId?: string;
+  onLine: () => void;
+  onEnd: () => void;
+  onOpenPerson: (personId?: string) => void;
 }) {
   return (
-    <Pressable style={styles.priorityRow} onPress={onPress}>
-      <View style={styles.priorityHeader}>
-        <Text style={styles.priorityBadge}>{item.priority}</Text>
-        <Text style={styles.rowName}>{item.personName}</Text>
-        <Text style={styles.actionType}>{item.actionType}</Text>
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <Section title="後メモ" subtitle="予定前ナビで決めた質問の回答を入れて、人脈カードを育てます。">
+        {['最近、採用と集客どちらが大変ですか？', '周りの経営者も同じ悩みを持っていますか？'].map((question) => (
+          <View key={question} style={styles.questionBlock}>
+            <Text style={styles.questionText}>{question}</Text>
+            <TextInput
+              placeholder="相手の回答を入力"
+              placeholderTextColor="#94A3B8"
+              multiline
+              textAlignVertical="top"
+              style={styles.compactInput}
+            />
+          </View>
+        ))}
+      </Section>
+      <Section title="AIの人脈カード更新案">
+        <Info label="分類変更案" value="紹介元候補 / 情報源候補を維持。" />
+        <Info label="次アクション" value="3日以内に会話で出た課題に関する情報を1つ送る。" />
+        <Info label="LINE文案" value="今日はありがとうございました。採用の話、とても参考になりました。" />
+      </Section>
+      <View style={styles.inlineActions}>
+        <Pressable style={styles.primaryCta} onPress={() => onOpenPerson(personId)}>
+          <Text style={styles.primaryCtaText}>人脈カード更新</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryCta} onPress={onLine}>
+          <Text style={styles.secondaryCtaText}>LINE文を作る</Text>
+        </Pressable>
       </View>
-      <Text style={styles.shortReason}>{item.shortReason}</Text>
-      <Text style={styles.todoLine}>今日やること：{item.todayTodo}</Text>
-      <View style={styles.rowButtons}>
-        <RowButton label="詳細" onPress={onPress} />
-        <RowButton label="完了" onPress={onComplete} />
-        <RowButton label="延期" onPress={onPostpone} />
+      <Pressable style={styles.secondaryCta} onPress={onEnd}>
+        <Text style={styles.secondaryCtaText}>今日の処理完了</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+function LineCheckPane({
+  personId,
+  onAfter,
+  onOpenPerson,
+}: {
+  personId?: string;
+  onAfter: () => void;
+  onOpenPerson: (personId?: string) => void;
+}) {
+  return (
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <Section title="LINEチェック" subtitle="送信前チェックと、相手の返信から人脈カードへ情報を吸収します。">
+        <Text style={styles.inputLabel}>LINE文・相手の発言</Text>
+        <TextInput
+          placeholder="送る文、相手から来た文、スクショ内容、音声入力メモなど"
+          placeholderTextColor="#94A3B8"
+          multiline
+          textAlignVertical="top"
+          style={styles.largeInput}
+        />
+      </Section>
+      <Section title="チェック結果">
+        <Info label="売り込み感" value="中。保険の話題はまだ出さない方が安全。" />
+        <Info label="相手の温度感" value="中。返信意欲はあるが、商談化はまだ早い。" />
+        <Info label="人脈カード更新案" value="情報源候補を強める。次回連絡日は3日後。" />
+      </Section>
+      <View style={styles.inlineActions}>
+        <Pressable style={styles.primaryCta} onPress={() => onOpenPerson(personId)}>
+          <Text style={styles.primaryCtaText}>人脈カードに保存</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryCta} onPress={onAfter}>
+          <Text style={styles.secondaryCtaText}>後メモに送る</Text>
+        </Pressable>
       </View>
-    </Pressable>
+    </ScrollView>
   );
 }
 
-function ScheduleRow({ item, onPress }: { item: ScheduleItem; onPress: () => void }) {
+function EndOfDayPane({ onAfter, onHome }: { onAfter: () => void; onHome: () => void }) {
   return (
-    <Pressable style={styles.scheduleRow} onPress={onPress}>
-      <Text style={styles.scheduleTime}>{item.time}</Text>
-      <View style={styles.scheduleBody}>
-        <Text style={styles.rowName}>{item.title}</Text>
-        <Text style={styles.rowMeta}>目的：{item.purpose}</Text>
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <Section title="終業後チェック" subtitle="今日の営業データの漏れを確認し、明日のホームに返します。">
+        <Route title="今日やったこと" meta="山本さんに初回LINE / 佐藤さんと情報交換" />
+        <Route title="後メモ未入力" meta="佐藤さんの13:00情報交換後メモ" />
+        <Route title="次回連絡日未設定" meta="2人" />
+        <Route title="LINEチェックから保存されてない情報" meta="2件" />
+      </Section>
+      <Section title="AIフィードバック">
+        <Info label="できたこと" value="初回連絡はできています。" />
+        <Info label="足りないこと" value="会話後メモが足りず、次アクション設定が弱いです。" />
+      </Section>
+      <View style={styles.inlineActions}>
+        <Pressable style={styles.secondaryCta} onPress={onAfter}>
+          <Text style={styles.secondaryCtaText}>未入力メモを処理</Text>
+        </Pressable>
+        <Pressable style={styles.primaryCta} onPress={onHome}>
+          <Text style={styles.primaryCtaText}>明日の営業地図を作る</Text>
+        </Pressable>
       </View>
-    </Pressable>
+    </ScrollView>
   );
 }
 
-function RouteRow({ item, onPress }: { item: RouteItem; onPress: () => void }) {
-  return (
-    <Pressable style={styles.routeRow} onPress={onPress}>
-      <Text style={styles.rowName}>
-        {item.personName} → {item.theme}
-      </Text>
-      <Text style={styles.rowMeta}>ルート種別：{item.routeType}</Text>
-      <Text style={styles.rowMeta}>現在地：{item.current}</Text>
-      <Text style={styles.todoLine}>今日進めること：{item.todayStep}</Text>
-    </Pressable>
-  );
-}
-
-function PostMeetingLine({ title, body }: { title: string; body: string }) {
-  return (
-    <View style={styles.postLine}>
-      <Text style={styles.rowName}>{title}</Text>
-      <Text style={styles.rowMeta}>{body}</Text>
-    </View>
-  );
-}
-
-function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
+function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <View style={styles.sectionCard}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -733,7 +594,7 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
   );
 }
 
-function InfoBlock({ label, value, compact }: { label: string; value: string; compact?: boolean }) {
+function Info({ label, value, compact }: { label: string; value: string; compact?: boolean }) {
   return (
     <View style={[styles.infoBlock, compact && styles.infoBlockCompact]}>
       <Text style={styles.infoLabel}>{label}</Text>
@@ -742,185 +603,33 @@ function InfoBlock({ label, value, compact }: { label: string; value: string; co
   );
 }
 
-function RowButton({ label, onPress }: { label: string; onPress: () => void }) {
+function Schedule({ time, title, purpose }: { time: string; title: string; purpose: string }) {
   return (
-    <Pressable style={styles.rowButton} onPress={onPress}>
+    <View style={styles.scheduleRow}>
+      <Text style={styles.scheduleTime}>{time}</Text>
+      <View style={styles.scheduleBody}>
+        <Text style={styles.rowName}>{title}</Text>
+        <Text style={styles.rowMeta}>目的：{purpose}</Text>
+      </View>
+    </View>
+  );
+}
+
+function Route({ title, meta }: { title: string; meta: string }) {
+  return (
+    <View style={styles.routeRow}>
+      <Text style={styles.rowName}>{title}</Text>
+      <Text style={styles.rowMeta}>{meta}</Text>
+    </View>
+  );
+}
+
+function MiniButton({ label }: { label: string }) {
+  return (
+    <View style={styles.rowButton}>
       <Text style={styles.rowButtonText}>{label}</Text>
-    </Pressable>
+    </View>
   );
-}
-
-function ModalButton({ label, primary, onPress }: { label: string; primary?: boolean; onPress: () => void }) {
-  return (
-    <Pressable style={[styles.modalButton, primary && styles.modalButtonPrimary]} onPress={onPress}>
-      <Text style={[styles.modalButtonText, primary && styles.modalButtonTextPrimary]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function TabButton({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
-  return (
-    <Pressable style={[styles.tabButton, selected && styles.tabButtonSelected]} onPress={onPress}>
-      <Text style={[styles.tabButtonText, selected && styles.tabButtonTextSelected]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function getModalTitle(modal: ModalState) {
-  if (modal.type === 'action') return '今日の行動詳細';
-  if (modal.type === 'schedule') return '予定と通知の詳細';
-  if (modal.type === 'route') return '営業ルート詳細';
-  if (modal.type === 'meeting') return '商談前ナビ';
-  if (modal.type === 'postMeeting') return '商談後メモ';
-  if (modal.type === 'notifications') return '今日の通知';
-  if (modal.type === 'addAction') return '今日やることを追加';
-  return '';
-}
-
-function createTodayActions(people: Person[]): TodayAction[] {
-  const yamamoto = findPerson(people, '山本', 'mock-yamamoto');
-  const tanaka = findPerson(people, '田中', 'mock-tanaka');
-  const sato = findPerson(people, '佐藤', 'mock-sato');
-
-  return [
-    {
-      id: 'action-yamamoto',
-      priority: '最優先',
-      personName: yamamoto?.name ?? '山本さん',
-      personId: yamamoto?.id ?? 'mock-yamamoto',
-      actionType: '初回連絡',
-      shortReason: '紹介直後。温度感が落ちる前に連絡する',
-      todayTodo: '整体院の経営課題を聞く',
-      purpose: '紹介直後の初回接触を完了し、本人の店舗課題を確認する',
-      whyToday: '紹介者の信頼と相手の記憶が残っているうちに接触するため',
-      evidence: '紹介直後は記憶の鮮度が高く、接触が遅れるほど反応率と信頼の受け渡し効果が落ちやすい',
-      question: '整体院の経営で、最近いちばん負担に感じる固定費は何ですか？',
-      message: '山本さん、先日はご紹介でありがとうございました。整体院経営で最近負担に感じることを少し教えていただけませんか？',
-    },
-    {
-      id: 'action-tanaka',
-      priority: '重要',
-      personName: tanaka?.name ?? '田中さん',
-      personId: tanaka?.id ?? 'mock-tanaka',
-      actionType: '情報交換',
-      shortReason: '美容業界の紹介元候補。紹介依頼前に課題を聞く',
-      todayTodo: '採用・集客の悩みを聞く',
-      purpose: '美容業界の経営者人脈を確認し、紹介元化の入口を作る',
-      whyToday: '前回接触から3日。関係が冷める前に軽く接触するため',
-      evidence: '短い間隔で価値ある質問を挟むと、売り込み感を下げながら関係記憶を維持しやすい',
-      question: '美容系の経営者さんって、最近は集客より採用の方が大変だったりしますか？',
-      message: '田中さん、先日はありがとうございました。美容業界の採用や集客の悩みについて少し教えていただけませんか？',
-    },
-    {
-      id: 'action-sato',
-      priority: '予定あり',
-      personName: sato?.name ?? '佐藤さん',
-      personId: sato?.id ?? 'mock-sato',
-      actionType: '会う前準備',
-      shortReason: '今日13時に情報交換予定',
-      todayTodo: '不動産顧客層の動きを聞く準備',
-      purpose: '不動産顧客層の動きを聞き、情報源化ルートを進める',
-      whyToday: '面談前に質問を固定しておくと、会話が雑談で終わりにくい',
-      evidence: '事前に質問を明確化すると、認知負荷が下がり、会話中に目的から逸れにくい',
-      question: '最近、不動産を検討する方って、投資目的と自宅目的だとどちらが多いですか？',
-      message: '佐藤さん、本日13時よろしくお願いします。不動産まわりの最近の動きも少し伺えたら嬉しいです。',
-    },
-  ];
-}
-
-function createScheduleItems(people: Person[]): ScheduleItem[] {
-  const yamamoto = findPerson(people, '山本', 'mock-yamamoto');
-  const sato = findPerson(people, '佐藤', 'mock-sato');
-  const tanaka = findPerson(people, '田中', 'mock-tanaka');
-
-  return [
-    {
-      id: 'schedule-yamamoto',
-      time: '10:00',
-      personName: yamamoto?.name ?? '山本さん',
-      personId: yamamoto?.id ?? 'mock-yamamoto',
-      title: '山本さんに初回LINE',
-      purpose: '紹介直後の初回接触',
-      kind: 'line',
-    },
-    {
-      id: 'schedule-sato',
-      time: '13:00',
-      personName: sato?.name ?? '佐藤さん',
-      personId: sato?.id ?? 'mock-sato',
-      title: '佐藤さんと情報交換',
-      purpose: '不動産顧客層の情報取得',
-      kind: 'meeting',
-    },
-    {
-      id: 'schedule-tanaka',
-      time: '18:00',
-      personName: tanaka?.name ?? '田中さん',
-      personId: tanaka?.id ?? 'mock-tanaka',
-      title: '田中さんに近況LINE',
-      purpose: '美容業界の課題確認',
-      kind: 'line',
-    },
-  ];
-}
-
-function createRouteItems(people: Person[]): RouteItem[] {
-  const yamamoto = findPerson(people, '山本', 'mock-yamamoto');
-  const tanaka = findPerson(people, '田中', 'mock-tanaka');
-  const sato = findPerson(people, '佐藤', 'mock-sato');
-
-  return [
-    {
-      id: 'route-yamamoto',
-      personName: yamamoto?.name ?? '山本さん',
-      personId: yamamoto?.id ?? 'mock-yamamoto',
-      theme: '本人の店舗課題確認',
-      routeType: '顧客化ルート',
-      current: '紹介直後',
-      todayStep: '初回接触',
-      goal: '本人の経営課題を確認し、将来の相談余地を作る',
-      nextMove: '返信後に分類と次回連絡日を更新する',
-    },
-    {
-      id: 'route-tanaka',
-      personName: tanaka?.name ?? '田中さん',
-      personId: tanaka?.id ?? 'mock-tanaka',
-      theme: '美容業界の経営者人脈',
-      routeType: '紹介元化ルート',
-      current: '情報交換前',
-      todayStep: '採用・集客課題を聞く',
-      goal: '美容業界の紹介元候補として関係を温める',
-      nextMove: '役立つ情報を渡して2回目以降に紹介依頼を検討する',
-    },
-    {
-      id: 'route-sato',
-      personName: sato?.name ?? '佐藤さん',
-      personId: sato?.id ?? 'mock-sato',
-      theme: '資産形成層の情報',
-      routeType: '情報源化ルート',
-      current: '質問準備',
-      todayStep: '不動産顧客層の動きを聞く',
-      goal: '資産形成層の動きについて情報源として関係を作る',
-      nextMove: '聞いた情報をメモ化し、紹介先候補の判断材料にする',
-    },
-  ];
-}
-
-function createMeetingCheck(people: Person[]): MeetingCheck {
-  const sato = findPerson(people, '佐藤', 'mock-sato');
-
-  return {
-    personName: sato?.name ?? '佐藤さん',
-    personId: sato?.id ?? 'mock-sato',
-    time: '13:00',
-    purpose: '不動産顧客層の動きを聞く',
-    question: '最近、不動産を検討する方って、投資目的と自宅目的だとどちらが多いですか？',
-    caution: '一方的に聞くだけで終わらない。情報交換の形にする。',
-  };
-}
-
-function findPerson(people: Person[], keyword: string, fallbackId: string) {
-  return people.find((person) => person.name.includes(keyword)) ?? people.find((person) => person.id === fallbackId);
 }
 
 function matchesIndustryFilter(person: Person, filter: string) {
@@ -962,53 +671,76 @@ function priorityScore(person: Person) {
   return dueBonus + person.referrerPotential + actionBonus + recentBonus;
 }
 
+function createTodayActions(people: Person[]): TodayAction[] {
+  const yamamoto = findPerson(people, '山本', 'mock-yamamoto');
+  const tanaka = findPerson(people, '田中', 'mock-tanaka');
+  const sato = findPerson(people, '佐藤', 'mock-sato');
+
+  return [
+    {
+      id: 'action-yamamoto',
+      priority: '最優先',
+      personName: yamamoto?.name ?? '山本さん',
+      personId: yamamoto?.id ?? 'mock-yamamoto',
+      actionType: '初回連絡',
+      shortReason: '紹介直後。温度感が落ちる前に連絡する',
+      todayTodo: '整体院の経営課題を聞く',
+      purpose: '紹介直後の初回接触を完了し、本人の店舗課題を確認する',
+      question: '整体院の経営で、最近いちばん負担に感じる固定費は何ですか？',
+      message: '山本さん、先日はご紹介でありがとうございました。',
+    },
+    {
+      id: 'action-tanaka',
+      priority: '重要',
+      personName: tanaka?.name ?? '田中さん',
+      personId: tanaka?.id ?? 'mock-tanaka',
+      actionType: '情報交換',
+      shortReason: '美容業界の紹介元候補。紹介依頼前に課題を聞く',
+      todayTodo: '採用・集客の悩みを聞く',
+      purpose: '美容業界の経営者人脈を確認する',
+      question: '美容系の経営者さんって、最近は集客より採用の方が大変だったりしますか？',
+      message: '田中さん、先日はありがとうございました。',
+    },
+    {
+      id: 'action-sato',
+      priority: '予定あり',
+      personName: sato?.name ?? '佐藤さん',
+      personId: sato?.id ?? 'mock-sato',
+      actionType: '会う前準備',
+      shortReason: '今日13時に情報交換予定',
+      todayTodo: '不動産顧客層の動きを聞く準備',
+      purpose: '不動産顧客層の動きを聞く',
+      question: '最近、不動産を検討する方って、投資目的と自宅目的だとどちらが多いですか？',
+      message: '佐藤さん、本日13時よろしくお願いします。',
+    },
+  ];
+}
+
+function findPerson(people: Person[], keyword: string, fallbackId: string) {
+  return people.find((person) => person.name.includes(keyword)) ?? people.find((person) => person.id === fallbackId);
+}
+
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  container: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-  },
-  header: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  headerText: {
-    flex: 1,
-    paddingRight: 10,
-  },
-  screenName: {
-    color: '#64748B',
+  safe: { flex: 1, backgroundColor: '#F8FAFC' },
+  container: { flex: 1, paddingHorizontal: 16, paddingTop: 12 },
+  header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
+  headerText: { flex: 1, paddingRight: 10 },
+  screenName: { color: '#64748B', fontSize: 12, fontWeight: '900' },
+  appName: { color: '#0F172A', fontSize: 24, fontWeight: '900', marginTop: 2 },
+  dateText: { color: '#153E75', fontSize: 14, fontWeight: '900', marginTop: 2 },
+  subcopy: { color: '#64748B', fontSize: 13, fontWeight: '800', marginTop: 4 },
+  updatedNotice: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#DCFCE7',
+    borderRadius: 8,
+    color: '#166534',
     fontSize: 12,
     fontWeight: '900',
+    marginTop: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
-  appName: {
-    color: '#0F172A',
-    fontSize: 24,
-    fontWeight: '900',
-    marginTop: 2,
-  },
-  dateText: {
-    color: '#153E75',
-    fontSize: 14,
-    fontWeight: '900',
-    marginTop: 2,
-  },
-  subcopy: {
-    color: '#64748B',
-    fontSize: 13,
-    fontWeight: '800',
-    marginTop: 4,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 7,
-  },
+  headerActions: { flexDirection: 'row', gap: 7 },
   iconButton: {
     alignItems: 'center',
     backgroundColor: '#EAF2FF',
@@ -1019,49 +751,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 40,
   },
-  iconButtonDark: {
-    alignItems: 'center',
-    backgroundColor: '#153E75',
-    borderRadius: 8,
-    height: 40,
-    justifyContent: 'center',
-    width: 40,
-  },
-  tabBar: {
-    backgroundColor: '#E2E8F0',
-    borderRadius: 8,
-    flexGrow: 0,
-    marginBottom: 12,
-    padding: 4,
-  },
-  tabBarContent: {
-    gap: 4,
-    paddingRight: 4,
-  },
-  tabButton: {
-    alignItems: 'center',
-    borderRadius: 6,
-    justifyContent: 'center',
-    minHeight: 40,
-    minWidth: 108,
-    paddingHorizontal: 12,
-  },
-  tabButtonSelected: {
-    backgroundColor: '#FFFFFF',
-  },
-  tabButtonText: {
-    color: '#64748B',
-    fontWeight: '900',
-  },
-  tabButtonTextSelected: {
-    color: '#153E75',
-  },
-  homeContent: {
-    paddingBottom: 96,
-  },
-  listContent: {
-    paddingBottom: 96,
-  },
+  iconButtonDark: { alignItems: 'center', backgroundColor: '#153E75', borderRadius: 8, height: 40, justifyContent: 'center', width: 40 },
+  content: { paddingBottom: 172 },
   sectionCard: {
     backgroundColor: '#FFFFFF',
     borderColor: '#E2E8F0',
@@ -1070,45 +761,13 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     padding: 14,
   },
-  sectionTitle: {
-    color: '#0F172A',
-    fontSize: 17,
-    fontWeight: '900',
-  },
-  sectionSubtitle: {
-    color: '#64748B',
-    lineHeight: 19,
-    marginTop: 4,
-  },
-  sectionBody: {
-    marginTop: 10,
-  },
-  infoBlock: {
-    marginBottom: 9,
-  },
-  infoBlockCompact: {
-    marginBottom: 7,
-  },
-  infoLabel: {
-    color: '#64748B',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  infoValue: {
-    color: '#0F172A',
-    lineHeight: 20,
-    marginTop: 2,
-  },
-  updatedNotice: {
-    backgroundColor: '#DCFCE7',
-    borderRadius: 8,
-    color: '#166534',
-    fontSize: 12,
-    fontWeight: '900',
-    marginTop: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
+  sectionTitle: { color: '#0F172A', fontSize: 17, fontWeight: '900' },
+  sectionSubtitle: { color: '#64748B', lineHeight: 19, marginTop: 4 },
+  sectionBody: { marginTop: 10 },
+  infoBlock: { marginBottom: 9 },
+  infoBlockCompact: { marginBottom: 7 },
+  infoLabel: { color: '#64748B', fontSize: 12, fontWeight: '900' },
+  infoValue: { color: '#0F172A', lineHeight: 20, marginTop: 2 },
   priorityRow: {
     backgroundColor: '#F8FAFC',
     borderColor: '#E2E8F0',
@@ -1117,13 +776,7 @@ const styles = StyleSheet.create({
     marginBottom: 9,
     padding: 12,
   },
-  priorityHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 6,
-  },
+  priorityHeader: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 6 },
   priorityBadge: {
     backgroundColor: '#153E75',
     borderRadius: 999,
@@ -1134,31 +787,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 4,
   },
-  rowName: {
-    color: '#0F172A',
-    fontSize: 15,
-    fontWeight: '900',
-  },
-  actionType: {
-    color: '#64748B',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  shortReason: {
-    color: '#334155',
-    lineHeight: 20,
-  },
-  todoLine: {
-    color: '#153E75',
-    fontWeight: '900',
-    lineHeight: 20,
-    marginTop: 4,
-  },
-  rowButtons: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 10,
-  },
+  rowName: { color: '#0F172A', fontSize: 15, fontWeight: '900' },
+  actionType: { color: '#64748B', fontSize: 12, fontWeight: '900' },
+  shortReason: { color: '#334155', lineHeight: 20 },
+  todoLine: { color: '#153E75', fontWeight: '900', lineHeight: 20, marginTop: 4 },
+  rowButtons: { flexDirection: 'row', gap: 8, marginTop: 10 },
   rowButton: {
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
@@ -1169,168 +802,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 34,
   },
-  rowButtonText: {
-    color: '#153E75',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  scheduleRow: {
-    alignItems: 'flex-start',
-    borderBottomColor: '#E2E8F0',
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: 12,
-    paddingVertical: 10,
-  },
-  scheduleTime: {
-    color: '#153E75',
-    fontSize: 15,
-    fontWeight: '900',
-    width: 52,
-  },
-  scheduleBody: {
-    flex: 1,
-  },
-  rowMeta: {
-    color: '#64748B',
-    lineHeight: 19,
-    marginTop: 2,
-  },
-  routeRow: {
-    backgroundColor: '#F8FAFC',
-    borderColor: '#E2E8F0',
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 8,
-    padding: 12,
-  },
-  prepCard: {
-    backgroundColor: '#F8FAFC',
-    borderColor: '#E2E8F0',
-    borderRadius: 8,
-    borderWidth: 1,
-    padding: 12,
-  },
-  linkText: {
-    color: '#153E75',
-    fontWeight: '900',
-    marginTop: 4,
-  },
-  postLine: {
-    backgroundColor: '#F8FAFC',
-    borderRadius: 8,
-    marginBottom: 8,
-    padding: 10,
-  },
-  bodyText: {
-    color: '#334155',
-    lineHeight: 22,
-    marginBottom: 6,
-  },
-  primaryCta: {
-    alignItems: 'center',
-    backgroundColor: '#153E75',
-    borderRadius: 8,
-    flexDirection: 'row',
-    gap: 8,
-    justifyContent: 'center',
-    marginTop: 4,
-    minHeight: 48,
-  },
-  primaryCtaText: {
-    color: '#FFFFFF',
-    fontWeight: '900',
-  },
-  secondaryCta: {
-    alignItems: 'center',
-    backgroundColor: '#EAF2FF',
-    borderColor: '#B8D4FF',
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: 'center',
-    marginTop: 8,
-    minHeight: 44,
-  },
-  secondaryCtaText: {
-    color: '#153E75',
-    fontWeight: '900',
-  },
-  notificationRow: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-    gap: 12,
-    paddingVertical: 10,
-  },
-  notificationTime: {
-    color: '#153E75',
-    fontSize: 15,
-    fontWeight: '900',
-    width: 52,
-  },
-  notificationBody: {
-    flex: 1,
-  },
-  modalBackdrop: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.38)',
-    flex: 1,
-    justifyContent: 'center',
-    padding: 18,
-  },
-  modalCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    maxHeight: '86%',
-    padding: 16,
-    width: '100%',
-  },
-  modalHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  modalTitle: {
-    color: '#0F172A',
-    fontSize: 18,
-    fontWeight: '900',
-  },
-  closeButton: {
-    alignItems: 'center',
-    backgroundColor: '#F1F5F9',
-    borderRadius: 8,
-    height: 36,
-    justifyContent: 'center',
-    width: 36,
-  },
-  modalButtonGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 8,
-  },
-  modalButton: {
-    alignItems: 'center',
-    borderColor: '#CBD5E1',
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 42,
-    paddingHorizontal: 12,
-    width: '48%',
-  },
-  modalButtonPrimary: {
-    backgroundColor: '#153E75',
-    borderColor: '#153E75',
-  },
-  modalButtonText: {
-    color: '#153E75',
-    fontWeight: '900',
-    textAlign: 'center',
-  },
-  modalButtonTextPrimary: {
-    color: '#FFFFFF',
-  },
+  rowButtonText: { color: '#153E75', fontSize: 12, fontWeight: '900' },
+  scheduleRow: { alignItems: 'flex-start', borderBottomColor: '#E2E8F0', borderBottomWidth: 1, flexDirection: 'row', gap: 12, paddingVertical: 10 },
+  scheduleTime: { color: '#153E75', fontSize: 15, fontWeight: '900', width: 52 },
+  scheduleBody: { flex: 1 },
+  rowMeta: { color: '#64748B', lineHeight: 19, marginTop: 2 },
+  routeRow: { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0', borderRadius: 8, borderWidth: 1, marginBottom: 8, padding: 12 },
   searchBox: {
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
@@ -1342,67 +819,86 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 12,
   },
-  searchInput: {
+  searchInput: { color: '#0F172A', flex: 1, fontSize: 15 },
+  filterTitle: { color: '#334155', fontSize: 13, fontWeight: '900', marginBottom: 8, marginTop: 14 },
+  filterRow: { flexGrow: 0 },
+  summary: { marginBottom: 8, marginTop: 16 },
+  summaryText: { color: '#64748B', fontWeight: '900' },
+  empty: { backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderRadius: 8, borderWidth: 1, marginTop: 8, padding: 20 },
+  emptyTitle: { color: '#0F172A', fontSize: 16, fontWeight: '900' },
+  emptyText: { color: '#64748B', lineHeight: 20, marginTop: 8 },
+  emptyButton: { alignItems: 'center', backgroundColor: '#153E75', borderRadius: 8, justifyContent: 'center', marginTop: 14, minHeight: 46 },
+  emptyButtonText: { color: '#FFFFFF', fontWeight: '900' },
+  inputLabel: { color: '#64748B', fontSize: 12, fontWeight: '900', marginBottom: 6 },
+  compactInput: {
+    minHeight: 76,
+    backgroundColor: '#F8FAFC',
+    borderColor: '#D7DEE8',
+    borderRadius: 8,
+    borderWidth: 1,
     color: '#0F172A',
+    lineHeight: 20,
+    padding: 10,
+  },
+  largeInput: {
+    minHeight: 132,
+    backgroundColor: '#F8FAFC',
+    borderColor: '#D7DEE8',
+    borderRadius: 8,
+    borderWidth: 1,
+    color: '#0F172A',
+    lineHeight: 22,
+    padding: 12,
+  },
+  questionBlock: { marginBottom: 12 },
+  questionText: { color: '#153E75', fontWeight: '900', lineHeight: 20, marginBottom: 6 },
+  inlineActions: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  primaryCta: {
+    alignItems: 'center',
+    backgroundColor: '#153E75',
+    borderRadius: 8,
     flex: 1,
-    fontSize: 15,
+    justifyContent: 'center',
+    minHeight: 46,
   },
-  filterTitle: {
-    color: '#334155',
-    fontSize: 13,
-    fontWeight: '900',
-    marginBottom: 8,
-    marginTop: 14,
+  primaryCtaText: { color: '#FFFFFF', fontWeight: '900', textAlign: 'center' },
+  secondaryCta: {
+    alignItems: 'center',
+    backgroundColor: '#EAF2FF',
+    borderColor: '#B8D4FF',
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 46,
   },
-  filterRow: {
-    flexGrow: 0,
-  },
-  summary: {
-    marginBottom: 8,
-    marginTop: 16,
-  },
-  summaryText: {
-    color: '#64748B',
-    fontWeight: '900',
-  },
-  empty: {
+  secondaryCtaText: { color: '#153E75', fontWeight: '900', textAlign: 'center' },
+  bottomNav: {
+    alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderColor: '#E2E8F0',
     borderRadius: 8,
     borderWidth: 1,
-    marginTop: 8,
-    padding: 20,
-  },
-  emptyTitle: {
-    color: '#0F172A',
-    fontSize: 16,
-    fontWeight: '900',
-  },
-  emptyText: {
-    color: '#64748B',
-    lineHeight: 20,
-    marginTop: 8,
-  },
-  emptyButton: {
-    alignItems: 'center',
-    backgroundColor: '#153E75',
-    borderRadius: 8,
-    justifyContent: 'center',
-    marginTop: 14,
-    minHeight: 46,
-  },
-  emptyButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '900',
-  },
-  floatingActions: {
-    bottom: 18,
+    bottom: 82,
     flexDirection: 'row',
-    gap: 10,
+    gap: 4,
+    justifyContent: 'space-between',
     left: 16,
+    padding: 6,
     position: 'absolute',
     right: 16,
   },
+  navIconButton: {
+    alignItems: 'center',
+    borderRadius: 8,
+    flex: 1,
+    height: 44,
+    justifyContent: 'center',
+  },
+  navIconButtonActive: { backgroundColor: '#EAF2FF' },
+  navIcon: { fontSize: 22 },
+  navDot: { backgroundColor: '#153E75', borderRadius: 999, height: 4, marginTop: 2, width: 16 },
+  floatingActions: { bottom: 18, flexDirection: 'row', gap: 10, left: 16, position: 'absolute', right: 16 },
   floatingButton: {
     alignItems: 'center',
     borderRadius: 8,
@@ -1412,21 +908,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 52,
   },
-  coachButton: {
-    backgroundColor: '#EAF2FF',
-    borderColor: '#B8D4FF',
-    borderWidth: 1,
-  },
-  addButton: {
-    backgroundColor: '#153E75',
-  },
-  coachButtonText: {
-    color: '#153E75',
-    fontWeight: '900',
-  },
-  addButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '900',
-    fontSize: 13,
-  },
+  coachButton: { backgroundColor: '#EAF2FF', borderColor: '#B8D4FF', borderWidth: 1 },
+  addButton: { backgroundColor: '#153E75' },
+  coachButtonText: { color: '#153E75', fontWeight: '900' },
+  addButtonText: { color: '#FFFFFF', fontWeight: '900', fontSize: 13 },
 });
