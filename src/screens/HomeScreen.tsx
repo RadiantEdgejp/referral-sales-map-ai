@@ -11,7 +11,21 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { Bell, Bot, Plus, RefreshCw, Search, UserPlus } from 'lucide-react-native';
+import {
+  Bell,
+  Bot,
+  ClipboardPenLine,
+  Compass,
+  House,
+  MessageSquareText,
+  Moon,
+  Plus,
+  RefreshCw,
+  Search,
+  UserPlus,
+  UsersRound,
+} from 'lucide-react-native';
+import type { LucideIcon } from 'lucide-react-native';
 import FilterChip from '../components/FilterChip';
 import PersonCard from '../components/PersonCard';
 import { MOCK_PEOPLE } from '../data/mockPeople';
@@ -53,13 +67,13 @@ const SORTS: Array<{ label: string; value: SortMode }> = [
   { label: '紹介元可能性が高い順', value: 'referrer' },
 ];
 
-const NAV_ITEMS: Array<{ tab: MainTab; icon: string; hint: string }> = [
-  { tab: 'home', icon: '🏠', hint: 'ホーム' },
-  { tab: 'people', icon: '👥', hint: '人脈カード' },
-  { tab: 'pre', icon: '🧭', hint: '予定前ナビ' },
-  { tab: 'after', icon: '📝', hint: '後メモ' },
-  { tab: 'line', icon: '💬', hint: 'LINEチェック' },
-  { tab: 'end', icon: '🌙', hint: '終業後チェック' },
+const NAV_ITEMS: Array<{ tab: MainTab; Icon: LucideIcon; label: string; hint: string }> = [
+  { tab: 'home', Icon: House, label: 'ホーム', hint: 'ホーム' },
+  { tab: 'people', Icon: UsersRound, label: '人脈', hint: '人脈カード' },
+  { tab: 'pre', Icon: Compass, label: '予定前', hint: '予定前ナビ' },
+  { tab: 'after', Icon: ClipboardPenLine, label: '後メモ', hint: '後メモ' },
+  { tab: 'line', Icon: MessageSquareText, label: '文確認', hint: 'LINE文チェック' },
+  { tab: 'end', Icon: Moon, label: '終了後', hint: '終業後チェック' },
 ];
 
 const SCREEN_META: Record<MainTab, { screenName: string; title: string; subcopy: string }> = {
@@ -206,14 +220,11 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
 
         <View style={styles.bottomNav}>
           {NAV_ITEMS.map((item) => (
-            <Pressable
-              key={item.tab}
-              accessibilityLabel={item.hint}
-              style={[styles.navIconButton, activeTab === item.tab && styles.navIconButtonActive]}
-              onPress={() => setActiveTab(item.tab)}
-            >
-              <Text style={styles.navIcon}>{item.icon}</Text>
-              {activeTab === item.tab ? <View style={styles.navDot} /> : null}
+            <Pressable key={item.tab} accessibilityLabel={item.hint} style={styles.navItem} onPress={() => setActiveTab(item.tab)}>
+              <View style={[styles.navIconButton, activeTab === item.tab && styles.navIconButtonActive]}>
+                <item.Icon color={activeTab === item.tab ? '#0F172A' : '#94A3B8'} size={22} strokeWidth={activeTab === item.tab ? 2.5 : 2} />
+              </View>
+              <Text style={[styles.navLabel, activeTab === item.tab && styles.navLabelActive]}>{item.label}</Text>
             </Pressable>
           ))}
         </View>
@@ -881,23 +892,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     bottom: 82,
     flexDirection: 'row',
-    gap: 4,
     justifyContent: 'space-between',
     left: 16,
-    padding: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 7,
     position: 'absolute',
     right: 16,
   },
+  navItem: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 52,
+  },
   navIconButton: {
     alignItems: 'center',
-    borderRadius: 8,
-    flex: 1,
-    height: 44,
+    borderRadius: 999,
+    height: 28,
     justifyContent: 'center',
+    width: 36,
   },
-  navIconButtonActive: { backgroundColor: '#EAF2FF' },
-  navIcon: { fontSize: 22 },
-  navDot: { backgroundColor: '#153E75', borderRadius: 999, height: 4, marginTop: 2, width: 16 },
+  navIconButtonActive: { backgroundColor: '#F1F5F9' },
+  navLabel: {
+    color: '#94A3B8',
+    fontSize: 10,
+    fontWeight: '900',
+    marginTop: 3,
+  },
+  navLabelActive: { color: '#0F172A' },
   floatingActions: { bottom: 18, flexDirection: 'row', gap: 10, left: 16, position: 'absolute', right: 16 },
   floatingButton: {
     alignItems: 'center',
