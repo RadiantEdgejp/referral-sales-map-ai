@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import * as Clipboard from 'expo-clipboard';
 import {
   Bell,
   Bot,
@@ -209,7 +210,14 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             onAddPerson={() => navigation.navigate('AddPerson')}
           />
         ) : activeTab === 'pre' ? (
-          <PreMeetingPane action={actions[0]} onAfter={() => setActiveTab('after')} onOpenPerson={openPerson} />
+          <PreMeetingPane
+            people={people}
+            initialPersonId={actions[0]?.personId}
+            onAfter={() => setActiveTab('after')}
+            onLine={() => setActiveTab('line')}
+            onOpenPerson={openPerson}
+            onOpenCoach={(initialPrompt) => navigation.navigate('CoachChat', { initialPrompt })}
+          />
         ) : activeTab === 'after' ? (
           <AfterMemoPane personId={actions[0]?.personId} onLine={() => setActiveTab('line')} onEnd={() => setActiveTab('end')} onOpenPerson={openPerson} />
         ) : activeTab === 'line' ? (
@@ -446,41 +454,239 @@ function PeoplePane({
 }
 
 function PreMeetingPane({
-  action,
+  people,
+  initialPersonId,
   onAfter,
+  onLine,
   onOpenPerson,
+  onOpenCoach,
 }: {
-  action?: TodayAction;
+  people: Person[];
+  initialPersonId?: string;
   onAfter: () => void;
+  onLine: () => void;
   onOpenPerson: (personId?: string) => void;
+  onOpenCoach: (initialPrompt: string) => void;
 }) {
+  const [selectedPersonId, setSelectedPersonId] = useState(initialPersonId ?? '');
+  const [actionType, setActionType] = useState('情報交換前');
+  const [memo, setMemo] = useState('');
+  const [hasGenerated, setHasGenerated] = useState(false);
+  const [copyNotice, setCopyNotice] = useState(false);
+
+  const selectedPerson = useMemo(() => {
+    const currentId = selectedPersonId || initialPersonId || people[0]?.id;
+    return people.find((person) => person.id === currentId) ?? people[0];
+  }, [initialPersonId, people, selectedPersonId]);
+
+  const nav = useMemo(() => createPreMeetingNavigation(selectedPerson, actionType), [actionType, selectedPerson]);
+  const currentPersonId = selectedPerson?.id ?? selectedPersonId;
+
+  const copyQuestions = () => {
+    Clipboard.setStringAsync(nav.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')).catch(() => undefined);
+    setCopyNotice(true);
+    Alert.alert('質問をコピーしました', '予定前ナビで決めた質問をコピーしました。');
+  };
+
+  const goAfterMemo = () => {
+    Alert.alert('後メモへ引き継ぎます', '相手・目的・質問・記録項目を後メモに渡す想定のUIです。');
+    onAfter();
+  };
+
+  if (people.length === 0) {
+    return (
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Section title="予定前ナビ" subtitle="会う前に、今日の目的と聞くべき質問を決める">
+          <View style={styles.empty}>
+            <Text style={styles.emptyTitle}>まだ相手が選ばれていません。</Text>
+            <Text style={styles.emptyText}>今日会う人、連絡する人、LINEする人を選んでください。</Text>
+            <Pressable style={styles.emptyButton} onPress={() => Alert.alert('人脈カードから選ぶ', '人脈カード一覧から相手を選ぶ想定です。')}>
+              <Text style={styles.emptyButtonText}>人脈カードから選ぶ</Text>
+            </Pressable>
+          </View>
+        </Section>
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      <Section title="予定前ナビ" subtitle="人脈カード・過去メモ・LINE情報を参照して、今日の質問を決めます。">
-        <Info label="今日会う人" value={action?.personName ?? '山本さん'} />
-        <Info label="目的" value={action?.actionType ?? '初回接触'} />
-        <Text style={styles.inputLabel}>追加メモ</Text>
+      <View style={styles.paneHeaderRow}>
+        <View style={styles.paneHeaderText}>
+          <Text style={styles.paneTitle}>予定前ナビ</Text>
+          <Text style={styles.paneSubcopy}>会う前に、今日の目的と聞くべき質問を決める</Text>
+        </View>
+        <View style={styles.paneHeaderActions}>
+          <Pressable style={styles.smallOutlineButton} onPress={() => onOpenPerson(currentPersonId)}>
+            <Text style={styles.smallOutlineText}>人脈</Text>
+          </Pressable>
+          <Pressable style={styles.smallOutlineButton} onPress={() => Alert.alert('履歴', '過去の予定前ナビへ移動する想定です。')}>
+            <Text style={styles.smallOutlineText}>履歴</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <Section title="相手を選ぶ" subtitle="今日アクションする相手を選ぶと、人脈カードの参照情報が下に出ます。">
+        {people.slice(0, 3).map((person) => {
+          const selected = person.id === currentPersonId;
+          return (
+            <Pressable
+              key={person.id}
+              style={[styles.personSelectCard, selected && styles.personSelectCardActive]}
+            onPress={() => {
+              setSelectedPersonId(person.id);
+              setHasGenerated(false);
+              setCopyNotice(false);
+            }}
+            >
+              <View style={styles.personSelectTop}>
+                <Text style={styles.personSelectName}>{person.name}</Text>
+                {selected ? <Text style={styles.selectedMark}>選択中</Text> : null}
+              </View>
+              <Text style={styles.personSelectMeta}>
+                {person.industry} / {person.relationship}
+              </Text>
+              <Text style={styles.personSelectTags}>分類：{person.categories.join('・')}</Text>
+              <Text style={styles.personSelectAction}>次アクション：{person.nextAction}</Text>
+            </Pressable>
+          );
+        })}
+      </Section>
+
+      <Section title="アクション種別を選ぶ">
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
+          {['初回連絡前', '商談前', '電話前', 'LINE前', '情報交換前', '追客前', '紹介依頼前', '関係構築前'].map((item) => (
+            <FilterChip
+              key={item}
+              label={item}
+              selected={actionType === item}
+              onPress={() => {
+                setActionType(item);
+                setHasGenerated(false);
+                setCopyNotice(false);
+              }}
+            />
+          ))}
+        </ScrollView>
+        <Text style={styles.guidanceText}>{getActionGuidance(actionType)}</Text>
+      </Section>
+
+      <Section title="参照している人脈情報" subtitle="人脈カード・過去メモ・LINEチェックの情報を参照して、今日のナビを作ります。">
+        <View style={styles.referenceGrid}>
+          <Info label="名前" value={selectedPerson?.name ?? '未選択'} compact />
+          <Info label="業種" value={selectedPerson?.industry ?? '未選択'} compact />
+          <Info label="関係性" value={selectedPerson?.relationship ?? '未選択'} compact />
+          <Info label="現在の分類" value={selectedPerson?.categories.join(' / ') ?? '未選択'} compact />
+          <Info label="現在のゴール" value={selectedPerson?.goal ?? '未設定'} compact />
+          <Info label="前回の接触" value={selectedPerson?.name.includes('田中') ? '3日前' : selectedPerson?.name.includes('山本') ? '紹介直後' : '本日13:00予定'} compact />
+          <Info label="次アクション" value={selectedPerson?.nextAction ?? '未設定'} compact />
+          <Info label="注意点" value={selectedPerson?.cautions ?? '未設定'} compact />
+        </View>
+        <Info label="過去メモ要約" value={selectedPerson?.rawMemo ?? '過去メモはまだありません。'} />
+        <Info label="LINEチェック要約" value={selectedPerson?.name.includes('田中') ? 'まだ具体的な返信履歴なし。売り込み感を抑えた情報交換文が安全。' : '返信内容から温度感と次回連絡日を更新する想定です。'} />
+        <View style={styles.inlineActions}>
+          <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(currentPersonId)}>
+            <Text style={styles.secondaryCtaText}>人脈カードを開く</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('参照情報を編集', '人脈カードの基本情報編集へ進む想定です。')}>
+            <Text style={styles.secondaryCtaText}>参照情報を編集</Text>
+          </Pressable>
+        </View>
+      </Section>
+
+      <Section title="今日の追加メモ">
         <TextInput
-          placeholder="今日聞きたいこと、相手の返信、紹介者情報など"
+          value={memo}
+          onChangeText={setMemo}
+          placeholder="例：今日13時に会う。採用の話を少し聞きたい。紹介依頼はまだ早そう。相手は忙しそうなので短く聞きたい。"
           placeholderTextColor="#94A3B8"
           multiline
           textAlignVertical="top"
-          style={styles.compactInput}
+          style={styles.largeInput}
         />
+        <View style={styles.inlineActions}>
+          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('音声入力', 'スマホ版で音声入力を開く想定です。')}>
+            <Text style={styles.secondaryCtaText}>音声入力</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryCta} onPress={() => setMemo('')}>
+            <Text style={styles.secondaryCtaText}>クリア</Text>
+          </Pressable>
+          <Pressable
+            style={styles.secondaryCta}
+            onPress={() =>
+              setMemo('今日13時に情報交換予定。美容業界の採用や集客の悩みを聞きたい。まだ紹介依頼はせず、まずは業界課題を聞く。')
+            }
+          >
+            <Text style={styles.secondaryCtaText}>サンプル</Text>
+          </Pressable>
+        </View>
       </Section>
-      <Section title="今日のナビ">
-        <Info label="今日の目的" value={action?.purpose ?? '相手の課題と次の接点を明確にする'} />
-        <Info label="聞くべき質問" value="最近、採用と集客どちらが大変ですか？\n周りの経営者も同じ悩みを持っていますか？" />
-        <Info label="売るべきか、聞くべきか" value="今日は売るより聞く。情報交換を優先する。" />
+
+      <Pressable
+        style={styles.fullPrimaryButton}
+        onPress={() => {
+          setHasGenerated(true);
+          setCopyNotice(false);
+          Alert.alert('今日のナビを作りました', '人脈カード情報と追加メモを参照したモックナビを表示します。');
+        }}
+      >
+        <Text style={styles.fullPrimaryText}>今日のナビを作る</Text>
+      </Pressable>
+
+      {hasGenerated ? (
+        <Section title="ナビ結果" subtitle={`${selectedPerson?.name ?? '相手未選択'} / ${actionType}`}>
+          <Info label="今日の目的" value={nav.purpose} />
+          <Info label="今日の到達点" value={nav.destination} />
+          <Info label="今日の会話方針" value={nav.policy} />
+          <Info label="最初の切り口" value={nav.opening} />
+          <Info label="聞くべき質問" value={nav.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')} />
+          <Info label="深掘り質問" value={nav.deepQuestions.map((question) => `・${question}`).join('\n')} />
+          <Info label="聞いてはいけないこと" value={nav.ngActions.map((item) => `・${item}`).join('\n')} />
+          <Info label="売るべきか、聞くべきか" value={nav.sellOrAsk} />
+          <Info label="紹介依頼してよいか" value={nav.referralTiming} />
+          <Info label="会話後に記録すべき項目" value={nav.recordItems.map((item) => `・${item}`).join('\n')} />
+          <Info label="科学的根拠" value={nav.evidence.map((item) => `・${item}`).join('\n')} />
+
+          <View style={styles.actionGrid}>
+            <Pressable style={styles.secondaryCta} onPress={copyQuestions}>
+              <Text style={styles.secondaryCtaText}>質問をコピー</Text>
+            </Pressable>
+            <Pressable style={styles.primaryCta} onPress={goAfterMemo}>
+              <Text style={styles.primaryCtaText}>後メモへ進む</Text>
+            </Pressable>
+            <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(currentPersonId)}>
+              <Text style={styles.secondaryCtaText}>人脈カード</Text>
+            </Pressable>
+            <Pressable style={styles.secondaryCta} onPress={onLine}>
+              <Text style={styles.secondaryCtaText}>LINE文を作る</Text>
+            </Pressable>
+            <Pressable style={styles.secondaryCta} onPress={() => onOpenCoach(nav.coachPrompt)}>
+              <Text style={styles.secondaryCtaText}>コーチ相談</Text>
+            </Pressable>
+            <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('予定前ナビを保存しました', '人脈カードの予定前ナビ履歴に保存する想定です。')}>
+              <Text style={styles.secondaryCtaText}>ナビを保存</Text>
+            </Pressable>
+          </View>
+          {copyNotice ? <Text style={styles.successNotice}>質問をコピーしました</Text> : null}
+        </Section>
+      ) : (
+        <Section title="ナビ結果">
+          <Text style={styles.emptyText}>相手・アクション種別・追加メモを確認して、「今日のナビを作る」を押してください。</Text>
+        </Section>
+      )}
+
+      <Section title="過去の予定前ナビ">
+        <Route title="6月18日 / 田中さん / 情報交換前" meta="目的：美容業界の採用・集客課題を聞く / 状態：後メモ未入力" />
+        <Route title="6月17日 / 山本さん / 初回連絡前" meta="目的：整体院の経営課題を確認 / 状態：後メモ入力済み" />
+        <View style={styles.inlineActions}>
+          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('履歴を見る', '予定前ナビ履歴一覧を開く想定です。')}>
+            <Text style={styles.secondaryCtaText}>履歴を見る</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryCta} onPress={onAfter}>
+            <Text style={styles.secondaryCtaText}>後メモを入力</Text>
+          </Pressable>
+        </View>
       </Section>
-      <View style={styles.inlineActions}>
-        <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(action?.personId)}>
-          <Text style={styles.secondaryCtaText}>人脈カードを見る</Text>
-        </Pressable>
-        <Pressable style={styles.primaryCta} onPress={onAfter}>
-          <Text style={styles.primaryCtaText}>後メモへ進む</Text>
-        </Pressable>
-      </View>
     </ScrollView>
   );
 }
@@ -641,6 +847,76 @@ function MiniButton({ label }: { label: string }) {
       <Text style={styles.rowButtonText}>{label}</Text>
     </View>
   );
+}
+
+function getActionGuidance(actionType: string) {
+  const guidance: Record<string, string> = {
+    初回連絡前: '売らずに関係開始と課題確認を優先します。',
+    商談前: '目的・質問・クロージング可否を整理します。',
+    電話前: '短時間で聞くことを絞り、次の接点を決めます。',
+    LINE前: '圧を弱め、返信しやすい文面にします。',
+    情報交換前: '業界課題と人脈の広がりを聞きます。',
+    追客前: '軽い接触で関係を切らさない文面を作ります。',
+    紹介依頼前: '紹介依頼してよい段階か、先に価値提供が必要かを見ます。',
+    関係構築前: '売り込みより、相手理解と信頼形成を優先します。',
+  };
+
+  return guidance[actionType] ?? '今日の目的に合わせて、聞くことと避けることを整理します。';
+}
+
+function createPreMeetingNavigation(person: Person | undefined, actionType: string) {
+  const name = person?.name ?? '田中さん';
+  const industry = person?.industry ?? '美容サロン経営';
+  const categories = person?.categories.join('・') ?? '紹介元候補・情報源候補';
+  const isReferralRequest = actionType === '紹介依頼前';
+  const isLine = actionType === 'LINE前' || actionType === '初回連絡前';
+
+  const questions = [
+    `最近、${industry}の方って、集客と採用だとどちらで悩んでいる方が多いですか？`,
+    `${name}の周りの経営者さんも、同じような悩みを持っている方は多いですか？`,
+    'そういう経営者さんって、今どんな人と繋がれると助かりそうですか？',
+  ];
+
+  return {
+    purpose: `${industry}の課題を聞き、この人が${categories}として進められるか判断する。`,
+    destination: isReferralRequest
+      ? '紹介依頼してよい段階かを確認する。早ければ、先に情報提供や人の紹介へ切り替える。'
+      : '紹介依頼まではしない。まず周辺課題と人脈の有無を確認する。',
+    policy: isLine
+      ? '短く、返信しやすく、相手の負担が少ない聞き方にする。'
+      : '売り込みではなく、相手の業界理解と情報交換を優先する。',
+    opening: `最近の${industry}まわりでは、集客・採用・人材定着のどこが重いのかを聞く。`,
+    questions,
+    deepQuestions: [
+      'その悩みって、ここ最近強くなっている感じですか？',
+      '周りで特に困っている方はいますか？',
+      '逆に、最近うまくいっている人は何が違うと思いますか？',
+    ],
+    ngActions: [
+      'いきなり保険や商品への興味を聞く',
+      'すぐに誰か紹介してほしいと頼む',
+      '相手の状況を聞かずに商品説明を始める',
+    ],
+    sellOrAsk: '今日は聞く日。本人への提案や紹介依頼はまだ早い。',
+    referralTiming: isReferralRequest
+      ? '依頼前に、相手が紹介するメリットと紹介先の条件を確認する。負担が大きそうなら延期する。'
+      : 'まだ早い。まずは情報交換をして、相手にとって話すメリットを作る。紹介依頼は2回目以降が安全。',
+    recordItems: [
+      '採用と集客のどちらが課題か',
+      '周りの経営者にも同じ悩みがあるか',
+      '紹介できそうな人がいるか',
+      `${name}本人の温度感`,
+      '次回連絡してよいタイミング',
+      'こちらから価値提供できそうな情報',
+    ],
+    evidence: [
+      'いきなり売ると心理的リアクタンスが起きやすい',
+      '質問を絞ると相手の認知負荷が下がり、答えやすくなる',
+      '先に情報交換や価値提供を挟むと、返報性が働きやすくなる',
+      '紹介依頼は相手の信用を使う行為なので、信頼形成前に頼むと負担が大きい',
+    ],
+    coachPrompt: `${name}との${actionType}です。今日の目的は、${industry}の課題を聞いて、${categories}として進められるか判断することです。今日の質問や進め方が適切か確認してください。`,
+  };
 }
 
 function matchesIndustryFilter(person: Person, filter: string) {
@@ -884,6 +1160,99 @@ const styles = StyleSheet.create({
     minHeight: 46,
   },
   secondaryCtaText: { color: '#153E75', fontWeight: '900', textAlign: 'center' },
+  paneHeaderRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  paneHeaderText: { flex: 1, paddingRight: 10 },
+  paneTitle: { color: '#0F172A', fontSize: 22, fontWeight: '900' },
+  paneSubcopy: { color: '#64748B', fontWeight: '800', lineHeight: 20, marginTop: 3 },
+  paneHeaderActions: { flexDirection: 'row', gap: 8 },
+  smallOutlineButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 38,
+    paddingHorizontal: 12,
+  },
+  smallOutlineText: { color: '#0F172A', fontSize: 12, fontWeight: '900' },
+  personSelectCard: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 9,
+    padding: 12,
+  },
+  personSelectCardActive: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#0F172A',
+  },
+  personSelectTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  personSelectName: { color: '#0F172A', fontSize: 16, fontWeight: '900' },
+  selectedMark: {
+    backgroundColor: '#0F172A',
+    borderRadius: 999,
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  personSelectMeta: { color: '#475569', fontWeight: '800', marginTop: 5 },
+  personSelectTags: { color: '#153E75', fontSize: 12, fontWeight: '900', marginTop: 7 },
+  personSelectAction: { color: '#334155', lineHeight: 20, marginTop: 5 },
+  guidanceText: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    color: '#334155',
+    fontWeight: '800',
+    lineHeight: 20,
+    marginTop: 10,
+    padding: 10,
+  },
+  referenceGrid: {
+    columnGap: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  fullPrimaryButton: {
+    alignItems: 'center',
+    backgroundColor: '#153E75',
+    borderRadius: 8,
+    justifyContent: 'center',
+    marginBottom: 12,
+    minHeight: 52,
+  },
+  fullPrimaryText: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
+  actionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 4,
+  },
+  successNotice: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#DCFCE7',
+    borderRadius: 8,
+    color: '#166534',
+    fontSize: 12,
+    fontWeight: '900',
+    marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
   bottomNav: {
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
