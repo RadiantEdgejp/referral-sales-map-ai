@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
+  Modal,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -237,19 +238,21 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           ))}
         </View>
 
-        <View style={styles.floatingActions}>
-          <Pressable
-            style={[styles.floatingButton, styles.coachButton]}
-            onPress={() => navigation.navigate('CoachChat', { initialPrompt: COACH_PREFILL })}
-          >
-            <Bot color="#153E75" size={20} />
-            <Text style={styles.coachButtonText}>営業コーチ</Text>
-          </Pressable>
-          <Pressable style={[styles.floatingButton, styles.addButton]} onPress={() => Alert.alert('今日やることを追加', 'モック追加モーダルの想定です。')}>
-            <Plus color="#FFFFFF" size={20} />
-            <Text style={styles.addButtonText}>今日やること追加</Text>
-          </Pressable>
-        </View>
+        {activeTab !== 'pre' ? (
+          <View style={styles.floatingActions}>
+            <Pressable
+              style={[styles.floatingButton, styles.coachButton]}
+              onPress={() => navigation.navigate('CoachChat', { initialPrompt: COACH_PREFILL })}
+            >
+              <Bot color="#153E75" size={20} />
+              <Text style={styles.coachButtonText}>営業コーチ</Text>
+            </Pressable>
+            <Pressable style={[styles.floatingButton, styles.addButton]} onPress={() => Alert.alert('今日やることを追加', 'モック追加モーダルの想定です。')}>
+              <Plus color="#FFFFFF" size={20} />
+              <Text style={styles.addButtonText}>今日やること追加</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
     </SafeAreaView>
   );
@@ -476,27 +479,30 @@ function PreMeetingPane({
   const [personQuery, setPersonQuery] = useState('');
   const [showReferenceDetails, setShowReferenceDetails] = useState(false);
   const [showNavDetails, setShowNavDetails] = useState(false);
+  const [personPickerOpen, setPersonPickerOpen] = useState(false);
+  const [showMoreNavActions, setShowMoreNavActions] = useState(false);
 
+  const uniquePeople = useMemo(() => dedupePeople(people), [people]);
   const selectedPerson = useMemo(() => {
-    const currentId = selectedPersonId || initialPersonId || people[0]?.id;
-    return people.find((person) => person.id === currentId) ?? people[0];
-  }, [initialPersonId, people, selectedPersonId]);
+    const currentId = selectedPersonId || initialPersonId || uniquePeople[0]?.id;
+    return uniquePeople.find((person) => person.id === currentId) ?? uniquePeople[0];
+  }, [initialPersonId, selectedPersonId, uniquePeople]);
 
   const nav = useMemo(() => createPreMeetingNavigation(selectedPerson, actionType), [actionType, selectedPerson]);
   const currentPersonId = selectedPerson?.id ?? selectedPersonId;
   const candidatePeople = useMemo(() => {
     const normalized = personQuery.trim().toLowerCase();
     const matches = normalized
-      ? people.filter((person) =>
+      ? uniquePeople.filter((person) =>
           [person.name, person.industry, person.relationship, person.categories.join(' '), person.nextAction, person.rawMemo]
             .join(' ')
             .toLowerCase()
             .includes(normalized),
         )
-      : people;
+      : uniquePeople;
 
-    return matches.slice(0, 6);
-  }, [people, personQuery]);
+    return dedupePeople(matches).slice(0, 20);
+  }, [people, personQuery, uniquePeople]);
 
   const copyQuestions = () => {
     Clipboard.setStringAsync(nav.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')).catch(() => undefined);
@@ -542,18 +548,7 @@ function PreMeetingPane({
         </View>
       </View>
 
-      <Section title="相手を選ぶ" subtitle="名前・業種・関係性で検索して、今日アクションする相手だけを選びます。">
-        <View style={styles.searchBox}>
-          <Search color="#64748B" size={18} />
-          <TextInput
-            value={personQuery}
-            onChangeText={setPersonQuery}
-            placeholder="相手を検索"
-            placeholderTextColor="#94A3B8"
-            style={styles.searchInput}
-          />
-        </View>
-
+      <Section title="相手を選ぶ" subtitle="選択中の相手だけ表示します。変更するときだけ検索を開きます。">
         {selectedPerson ? (
           <View style={styles.selectedPersonSummary}>
             <Text style={styles.selectedSummaryLabel}>選択中</Text>
@@ -565,34 +560,77 @@ function PreMeetingPane({
           </View>
         ) : null}
 
-        <Text style={styles.resultHint}>候補 {candidatePeople.length}件</Text>
-        {candidatePeople.map((person) => {
-          const selected = person.id === currentPersonId;
-          return (
-            <Pressable
-              key={person.id}
-              style={[styles.personSelectCard, selected && styles.personSelectCardActive]}
-            onPress={() => {
-              setSelectedPersonId(person.id);
-              setHasGenerated(false);
-              setCopyNotice(false);
-              setShowReferenceDetails(false);
-              setShowNavDetails(false);
-            }}
-            >
-              <View style={styles.personSelectTop}>
-                <Text style={styles.personSelectName}>{person.name}</Text>
-                {selected ? <Text style={styles.selectedMark}>選択中</Text> : null}
-              </View>
-              <Text style={styles.personSelectMeta}>
-                {person.industry} / {person.relationship}
-              </Text>
-              <Text style={styles.personSelectTags}>分類：{person.categories.join('・')}</Text>
-              <Text style={styles.personSelectAction}>次アクション：{person.nextAction}</Text>
-            </Pressable>
-          );
-        })}
+        <Pressable style={styles.changePersonButton} onPress={() => setPersonPickerOpen(true)}>
+          <Search color="#0F172A" size={18} />
+          <Text style={styles.changePersonText}>相手を変更する</Text>
+        </Pressable>
       </Section>
+
+      <Modal visible={personPickerOpen} transparent animationType="slide" onRequestClose={() => setPersonPickerOpen(false)}>
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.personPickerSheet}>
+            <View style={styles.sheetHeader}>
+              <View>
+                <Text style={styles.sheetTitle}>相手を検索</Text>
+                <Text style={styles.sheetSubcopy}>名前・業種・関係性・メモから探せます。</Text>
+              </View>
+              <Pressable style={styles.sheetCloseButton} onPress={() => setPersonPickerOpen(false)}>
+                <Text style={styles.sheetCloseText}>閉じる</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.searchBox}>
+              <Search color="#64748B" size={18} />
+              <TextInput
+                value={personQuery}
+                onChangeText={setPersonQuery}
+                placeholder="相手を検索"
+                placeholderTextColor="#94A3B8"
+                style={styles.searchInput}
+              />
+            </View>
+
+            <Text style={styles.resultHint}>候補 {candidatePeople.length}件</Text>
+            <ScrollView style={styles.personPickerList} showsVerticalScrollIndicator={false}>
+              {candidatePeople.length > 0 ? (
+                candidatePeople.map((person) => {
+                  const selected = person.id === currentPersonId;
+                  return (
+                    <Pressable
+                      key={person.id}
+                      style={[styles.personSelectCard, selected && styles.personSelectCardActive]}
+                      onPress={() => {
+                        setSelectedPersonId(person.id);
+                        setHasGenerated(false);
+                        setCopyNotice(false);
+                        setShowReferenceDetails(false);
+                        setShowNavDetails(false);
+                        setShowMoreNavActions(false);
+                        setPersonPickerOpen(false);
+                      }}
+                    >
+                      <View style={styles.personSelectTop}>
+                        <Text style={styles.personSelectName}>{person.name}</Text>
+                        {selected ? <Text style={styles.selectedMark}>選択中</Text> : null}
+                      </View>
+                      <Text style={styles.personSelectMeta}>
+                        {person.industry} / {person.relationship}
+                      </Text>
+                      <Text style={styles.personSelectTags}>分類：{person.categories.join('・')}</Text>
+                      <Text style={styles.personSelectAction}>次アクション：{person.nextAction}</Text>
+                    </Pressable>
+                  );
+                })
+              ) : (
+                <View style={styles.emptyPickerState}>
+                  <Text style={styles.emptyTitle}>候補が見つかりません。</Text>
+                  <Text style={styles.emptyText}>名前、業種、関係性、メモの一部で検索してみてください。</Text>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       <Section title="アクション種別を選ぶ">
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
@@ -605,6 +643,7 @@ function PreMeetingPane({
                 setActionType(item);
                 setHasGenerated(false);
                 setCopyNotice(false);
+                setShowMoreNavActions(false);
               }}
             />
           ))}
@@ -683,6 +722,7 @@ function PreMeetingPane({
           setHasGenerated(true);
           setCopyNotice(false);
           setShowNavDetails(false);
+          setShowMoreNavActions(false);
           Alert.alert('今日のナビを作りました', '人脈カード情報と追加メモを参照したモックナビを表示します。');
         }}
       >
@@ -724,26 +764,36 @@ function PreMeetingPane({
             </>
           ) : null}
 
-          <View style={styles.actionGrid}>
-            <Pressable style={styles.secondaryCta} onPress={copyQuestions}>
-              <Text style={styles.secondaryCtaText}>質問をコピー</Text>
-            </Pressable>
-            <Pressable style={styles.primaryCta} onPress={goAfterMemo}>
+          <View style={styles.primaryActionStack}>
+            <Pressable style={styles.primaryCtaWide} onPress={goAfterMemo}>
               <Text style={styles.primaryCtaText}>後メモへ進む</Text>
             </Pressable>
-            <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(currentPersonId)}>
-              <Text style={styles.secondaryCtaText}>人脈カード</Text>
-            </Pressable>
-            <Pressable style={styles.secondaryCta} onPress={onLine}>
-              <Text style={styles.secondaryCtaText}>LINE文を作る</Text>
-            </Pressable>
-            <Pressable style={styles.secondaryCta} onPress={() => onOpenCoach(nav.coachPrompt)}>
-              <Text style={styles.secondaryCtaText}>コーチ相談</Text>
-            </Pressable>
-            <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('予定前ナビを保存しました', '人脈カードの予定前ナビ履歴に保存する想定です。')}>
-              <Text style={styles.secondaryCtaText}>ナビを保存</Text>
-            </Pressable>
+            <View style={styles.inlineActions}>
+              <Pressable style={styles.secondaryCta} onPress={copyQuestions}>
+                <Text style={styles.secondaryCtaText}>質問をコピー</Text>
+              </Pressable>
+              <Pressable style={styles.secondaryCta} onPress={() => setShowMoreNavActions((value) => !value)}>
+                <Text style={styles.secondaryCtaText}>{showMoreNavActions ? 'その他を閉じる' : 'その他'}</Text>
+              </Pressable>
+            </View>
           </View>
+
+          {showMoreNavActions ? (
+            <View style={styles.moreActionPanel}>
+              <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(currentPersonId)}>
+                <Text style={styles.secondaryCtaText}>人脈カード</Text>
+              </Pressable>
+              <Pressable style={styles.secondaryCta} onPress={onLine}>
+                <Text style={styles.secondaryCtaText}>LINE文を作る</Text>
+              </Pressable>
+              <Pressable style={styles.secondaryCta} onPress={() => onOpenCoach(nav.coachPrompt)}>
+                <Text style={styles.secondaryCtaText}>コーチ相談</Text>
+              </Pressable>
+              <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('予定前ナビを保存しました', '人脈カードの予定前ナビ履歴に保存する想定です。')}>
+                <Text style={styles.secondaryCtaText}>ナビを保存</Text>
+              </Pressable>
+            </View>
+          ) : null}
           {copyNotice ? <Text style={styles.successNotice}>質問をコピーしました</Text> : null}
         </Section>
       ) : (
@@ -924,6 +974,19 @@ function MiniButton({ label }: { label: string }) {
       <Text style={styles.rowButtonText}>{label}</Text>
     </View>
   );
+}
+
+function dedupePeople(people: Person[]) {
+  const unique = new Map<string, Person>();
+
+  people.forEach((person) => {
+    const key = [person.name, person.industry, person.relationship].map((value) => value.trim()).join('|');
+    if (!unique.has(key)) {
+      unique.set(key, person);
+    }
+  });
+
+  return Array.from(unique.values());
 }
 
 function getActionGuidance(actionType: string) {
@@ -1298,7 +1361,57 @@ const styles = StyleSheet.create({
   selectedSummaryName: { color: '#FFFFFF', fontSize: 17, fontWeight: '900', marginTop: 3 },
   selectedSummaryMeta: { color: '#E2E8F0', fontWeight: '800', marginTop: 4 },
   selectedSummaryAction: { color: '#FFFFFF', lineHeight: 20, marginTop: 7 },
+  changePersonButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    marginTop: 10,
+    minHeight: 46,
+  },
+  changePersonText: { color: '#0F172A', fontWeight: '900' },
   resultHint: { color: '#64748B', fontSize: 12, fontWeight: '900', marginTop: 12, marginBottom: 7 },
+  sheetBackdrop: {
+    backgroundColor: 'rgba(15, 23, 42, 0.38)',
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  personPickerSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: '82%',
+    padding: 16,
+  },
+  sheetHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  sheetTitle: { color: '#0F172A', fontSize: 20, fontWeight: '900' },
+  sheetSubcopy: { color: '#64748B', fontWeight: '800', lineHeight: 19, marginTop: 3 },
+  sheetCloseButton: {
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    justifyContent: 'center',
+    minHeight: 38,
+    paddingHorizontal: 12,
+  },
+  sheetCloseText: { color: '#0F172A', fontSize: 12, fontWeight: '900' },
+  personPickerList: { maxHeight: 430 },
+  emptyPickerState: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 16,
+  },
   guidanceText: {
     backgroundColor: '#F8FAFC',
     borderColor: '#E2E8F0',
@@ -1363,11 +1476,30 @@ const styles = StyleSheet.create({
     minHeight: 52,
   },
   fullPrimaryText: { color: '#FFFFFF', fontSize: 15, fontWeight: '900' },
+  primaryActionStack: { gap: 10, marginTop: 4 },
+  primaryCtaWide: {
+    alignItems: 'center',
+    backgroundColor: '#153E75',
+    borderRadius: 8,
+    justifyContent: 'center',
+    minHeight: 50,
+  },
   actionGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
     marginTop: 4,
+  },
+  moreActionPanel: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 10,
+    padding: 10,
   },
   successNotice: {
     alignSelf: 'flex-start',
