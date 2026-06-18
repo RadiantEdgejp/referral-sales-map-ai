@@ -186,7 +186,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           <View style={styles.headerText}>
             <Text style={styles.screenName}>ホーム</Text>
             <Text style={styles.appName}>今日の営業地図</Text>
-            <Text style={styles.dateText}>6月18日</Text>
+            <Text style={styles.dateText}>6月19日</Text>
             <Text style={styles.subcopy}>営業開始前に、今日の方向性を確認する</Text>
           </View>
           <View style={styles.headerActions}>
@@ -222,6 +222,10 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             planUpdated={planUpdated}
             onOpenModal={setModal}
             onOpenPeople={() => setActiveTab('people')}
+            onOpenPreMeeting={() => navigation.navigate('PreMeetingNav', { personId: actions[0]?.personId, purpose: '初回接触' })}
+            onOpenAfterMemo={() => navigation.navigate('AfterMemo', { personId: actions[0]?.personId })}
+            onOpenLineCheck={() => navigation.navigate('LineCheck', { personId: actions[0]?.personId })}
+            onOpenEndOfDay={() => navigation.navigate('EndOfDayCheck')}
             onOpenCoach={() => navigation.navigate('CoachChat', { initialPrompt: COACH_PREFILL })}
           />
         ) : (
@@ -276,6 +280,10 @@ function HomePane({
   planUpdated,
   onOpenModal,
   onOpenPeople,
+  onOpenPreMeeting,
+  onOpenAfterMemo,
+  onOpenLineCheck,
+  onOpenEndOfDay,
   onOpenCoach,
 }: {
   actions: TodayAction[];
@@ -285,6 +293,10 @@ function HomePane({
   planUpdated: boolean;
   onOpenModal: (modal: ModalState) => void;
   onOpenPeople: () => void;
+  onOpenPreMeeting: () => void;
+  onOpenAfterMemo: () => void;
+  onOpenLineCheck: () => void;
+  onOpenEndOfDay: () => void;
   onOpenCoach: () => void;
 }) {
   return (
@@ -299,6 +311,13 @@ function HomePane({
           compact
         />
         {planUpdated ? <Text style={styles.updatedNotice}>今日の計画を更新済み</Text> : null}
+      </Section>
+
+      <Section title="営業データを育てる今日のループ" subtitle="予定前に質問を決め、会話後に回答を入れ、LINEと終業後チェックで人脈カードへ戻します。">
+        <LoopStep index="1" title="予定前ナビ" body="人脈カード・過去メモ・追加メモから、今日聞く質問を決める" onPress={onOpenPreMeeting} />
+        <LoopStep index="2" title="後メモ" body="予定前ナビで決めた質問の回答を入れ、人脈カード更新案を作る" onPress={onOpenAfterMemo} />
+        <LoopStep index="3" title="LINEチェック" body="LINEの送受信から温度感・課題・次アクションを吸収する" onPress={onOpenLineCheck} />
+        <LoopStep index="4" title="終業後チェック" body="未入力・更新漏れを確認し、翌日のホームへ反映する" onPress={onOpenEndOfDay} />
       </Section>
 
       <Section title="今日の優先行動" subtitle="短い行カードで、誰に・なぜ・何をするかだけ確認します。">
@@ -689,6 +708,28 @@ function RouteRow({ item, onPress }: { item: RouteItem; onPress: () => void }) {
       <Text style={styles.rowMeta}>ルート種別：{item.routeType}</Text>
       <Text style={styles.rowMeta}>現在地：{item.current}</Text>
       <Text style={styles.todoLine}>今日進めること：{item.todayStep}</Text>
+    </Pressable>
+  );
+}
+
+function LoopStep({
+  index,
+  title,
+  body,
+  onPress,
+}: {
+  index: string;
+  title: string;
+  body: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={styles.loopStep} onPress={onPress}>
+      <Text style={styles.loopIndex}>{index}</Text>
+      <View style={styles.loopBody}>
+        <Text style={styles.rowName}>{title}</Text>
+        <Text style={styles.rowMeta}>{body}</Text>
+      </View>
     </Pressable>
   );
 }
@@ -1178,6 +1219,29 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginBottom: 8,
     padding: 12,
+  },
+  loopStep: {
+    alignItems: 'flex-start',
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 8,
+    padding: 12,
+  },
+  loopIndex: {
+    backgroundColor: '#153E75',
+    borderRadius: 999,
+    color: '#FFFFFF',
+    fontWeight: '900',
+    overflow: 'hidden',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  loopBody: {
+    flex: 1,
   },
   prepCard: {
     backgroundColor: '#F8FAFC',
