@@ -14,21 +14,30 @@ import FilterChip from '../components/FilterChip';
 import SectionCard from '../components/SectionCard';
 import { createCoachMockAnswer } from '../data/mockAnalysis';
 import { getPeople } from '../storage/personStorage';
+import type { ScreenProps } from '../types/navigation';
 import type { Person } from '../types/person';
 
 type CoachAnswer = ReturnType<typeof createCoachMockAnswer>;
+
 const SAMPLE_COACH_PROMPT =
   '田中さんに美容サロン経営者を紹介してほしいです。まだ一回しか会っていません。今お願いしてもいいですか？';
 
-export default function CoachChatScreen() {
+export default function CoachChatScreen({ route }: ScreenProps<'CoachChat'>) {
   const [people, setPeople] = useState<Person[]>([]);
   const [selectedPersonId, setSelectedPersonId] = useState('none');
-  const [problem, setProblem] = useState('');
+  const [problem, setProblem] = useState(route.params?.initialPrompt ?? '');
   const [answer, setAnswer] = useState<CoachAnswer | null>(null);
 
   useEffect(() => {
     getPeople().then(setPeople);
   }, []);
+
+  useEffect(() => {
+    if (route.params?.initialPrompt) {
+      setProblem(route.params.initialPrompt);
+      setAnswer(null);
+    }
+  }, [route.params?.initialPrompt]);
 
   const submit = () => {
     setAnswer(createCoachMockAnswer(problem));
@@ -37,21 +46,14 @@ export default function CoachChatScreen() {
   const selectedPerson = people.find((person) => person.id === selectedPersonId);
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <Text style={styles.title}>営業コーチ</Text>
         <Text style={styles.subcopy}>営業の迷いを、次の行動に変える</Text>
 
         <Text style={styles.label}>関連人物</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.personRow}>
-          <FilterChip
-            label="指定なし"
-            selected={selectedPersonId === 'none'}
-            onPress={() => setSelectedPersonId('none')}
-          />
+          <FilterChip label="指定なし" selected={selectedPersonId === 'none'} onPress={() => setSelectedPersonId('none')} />
           {people.map((person) => (
             <FilterChip
               key={person.id}

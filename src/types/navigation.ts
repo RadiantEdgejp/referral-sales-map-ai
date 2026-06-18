@@ -4,7 +4,7 @@ export type RootStackParamList = {
   Home: undefined;
   AddPerson: undefined;
   PersonDetail: { personId: string };
-  CoachChat: undefined;
+  CoachChat: { initialPrompt?: string } | undefined;
 };
 
 export type ScreenProps<T extends keyof RootStackParamList> = NativeStackScreenProps<
