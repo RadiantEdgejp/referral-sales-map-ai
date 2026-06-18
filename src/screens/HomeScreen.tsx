@@ -473,6 +473,9 @@ function PreMeetingPane({
   const [memo, setMemo] = useState('');
   const [hasGenerated, setHasGenerated] = useState(false);
   const [copyNotice, setCopyNotice] = useState(false);
+  const [personQuery, setPersonQuery] = useState('');
+  const [showReferenceDetails, setShowReferenceDetails] = useState(false);
+  const [showNavDetails, setShowNavDetails] = useState(false);
 
   const selectedPerson = useMemo(() => {
     const currentId = selectedPersonId || initialPersonId || people[0]?.id;
@@ -481,6 +484,19 @@ function PreMeetingPane({
 
   const nav = useMemo(() => createPreMeetingNavigation(selectedPerson, actionType), [actionType, selectedPerson]);
   const currentPersonId = selectedPerson?.id ?? selectedPersonId;
+  const candidatePeople = useMemo(() => {
+    const normalized = personQuery.trim().toLowerCase();
+    const matches = normalized
+      ? people.filter((person) =>
+          [person.name, person.industry, person.relationship, person.categories.join(' '), person.nextAction, person.rawMemo]
+            .join(' ')
+            .toLowerCase()
+            .includes(normalized),
+        )
+      : people;
+
+    return matches.slice(0, 6);
+  }, [people, personQuery]);
 
   const copyQuestions = () => {
     Clipboard.setStringAsync(nav.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')).catch(() => undefined);
@@ -526,8 +542,31 @@ function PreMeetingPane({
         </View>
       </View>
 
-      <Section title="相手を選ぶ" subtitle="今日アクションする相手を選ぶと、人脈カードの参照情報が下に出ます。">
-        {people.slice(0, 3).map((person) => {
+      <Section title="相手を選ぶ" subtitle="名前・業種・関係性で検索して、今日アクションする相手だけを選びます。">
+        <View style={styles.searchBox}>
+          <Search color="#64748B" size={18} />
+          <TextInput
+            value={personQuery}
+            onChangeText={setPersonQuery}
+            placeholder="相手を検索"
+            placeholderTextColor="#94A3B8"
+            style={styles.searchInput}
+          />
+        </View>
+
+        {selectedPerson ? (
+          <View style={styles.selectedPersonSummary}>
+            <Text style={styles.selectedSummaryLabel}>選択中</Text>
+            <Text style={styles.selectedSummaryName}>{selectedPerson.name}</Text>
+            <Text style={styles.selectedSummaryMeta}>
+              {selectedPerson.industry} / {selectedPerson.relationship}
+            </Text>
+            <Text style={styles.selectedSummaryAction}>今日の焦点：{selectedPerson.nextAction}</Text>
+          </View>
+        ) : null}
+
+        <Text style={styles.resultHint}>候補 {candidatePeople.length}件</Text>
+        {candidatePeople.map((person) => {
           const selected = person.id === currentPersonId;
           return (
             <Pressable
@@ -537,6 +576,8 @@ function PreMeetingPane({
               setSelectedPersonId(person.id);
               setHasGenerated(false);
               setCopyNotice(false);
+              setShowReferenceDetails(false);
+              setShowNavDetails(false);
             }}
             >
               <View style={styles.personSelectTop}>
@@ -572,18 +613,32 @@ function PreMeetingPane({
       </Section>
 
       <Section title="参照している人脈情報" subtitle="人脈カード・過去メモ・LINEチェックの情報を参照して、今日のナビを作ります。">
-        <View style={styles.referenceGrid}>
-          <Info label="名前" value={selectedPerson?.name ?? '未選択'} compact />
-          <Info label="業種" value={selectedPerson?.industry ?? '未選択'} compact />
-          <Info label="関係性" value={selectedPerson?.relationship ?? '未選択'} compact />
-          <Info label="現在の分類" value={selectedPerson?.categories.join(' / ') ?? '未選択'} compact />
-          <Info label="現在のゴール" value={selectedPerson?.goal ?? '未設定'} compact />
-          <Info label="前回の接触" value={selectedPerson?.name.includes('田中') ? '3日前' : selectedPerson?.name.includes('山本') ? '紹介直後' : '本日13:00予定'} compact />
-          <Info label="次アクション" value={selectedPerson?.nextAction ?? '未設定'} compact />
-          <Info label="注意点" value={selectedPerson?.cautions ?? '未設定'} compact />
+        <View style={styles.referenceSummaryCard}>
+          <Text style={styles.referenceSummaryTitle}>
+            {selectedPerson?.categories.join(' / ') ?? '分類未設定'}
+          </Text>
+          <Text style={styles.referenceSummaryText}>ゴール：{selectedPerson?.goal ?? '未設定'}</Text>
+          <Text style={styles.referenceSummaryText}>次アクション：{selectedPerson?.nextAction ?? '未設定'}</Text>
+          <Text style={styles.referenceSummaryCaution}>注意：{selectedPerson?.cautions ?? '未設定'}</Text>
         </View>
-        <Info label="過去メモ要約" value={selectedPerson?.rawMemo ?? '過去メモはまだありません。'} />
-        <Info label="LINEチェック要約" value={selectedPerson?.name.includes('田中') ? 'まだ具体的な返信履歴なし。売り込み感を抑えた情報交換文が安全。' : '返信内容から温度感と次回連絡日を更新する想定です。'} />
+
+        <Pressable style={styles.toggleRow} onPress={() => setShowReferenceDetails((value) => !value)}>
+          <Text style={styles.toggleText}>{showReferenceDetails ? '参照情報を閉じる' : '参照情報を開く'}</Text>
+        </Pressable>
+
+        {showReferenceDetails ? (
+          <>
+            <View style={styles.referenceGrid}>
+              <Info label="名前" value={selectedPerson?.name ?? '未選択'} compact />
+              <Info label="業種" value={selectedPerson?.industry ?? '未選択'} compact />
+              <Info label="関係性" value={selectedPerson?.relationship ?? '未選択'} compact />
+              <Info label="現在の分類" value={selectedPerson?.categories.join(' / ') ?? '未選択'} compact />
+              <Info label="前回の接触" value={selectedPerson?.name.includes('田中') ? '3日前' : selectedPerson?.name.includes('山本') ? '紹介直後' : '本日13:00予定'} compact />
+            </View>
+            <Info label="過去メモ要約" value={selectedPerson?.rawMemo ?? '過去メモはまだありません。'} />
+            <Info label="LINEチェック要約" value={selectedPerson?.name.includes('田中') ? 'まだ具体的な返信履歴なし。売り込み感を抑えた情報交換文が安全。' : '返信内容から温度感と次回連絡日を更新する想定です。'} />
+          </>
+        ) : null}
         <View style={styles.inlineActions}>
           <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(currentPersonId)}>
             <Text style={styles.secondaryCtaText}>人脈カードを開く</Text>
@@ -627,6 +682,7 @@ function PreMeetingPane({
         onPress={() => {
           setHasGenerated(true);
           setCopyNotice(false);
+          setShowNavDetails(false);
           Alert.alert('今日のナビを作りました', '人脈カード情報と追加メモを参照したモックナビを表示します。');
         }}
       >
@@ -635,17 +691,38 @@ function PreMeetingPane({
 
       {hasGenerated ? (
         <Section title="ナビ結果" subtitle={`${selectedPerson?.name ?? '相手未選択'} / ${actionType}`}>
-          <Info label="今日の目的" value={nav.purpose} />
-          <Info label="今日の到達点" value={nav.destination} />
-          <Info label="今日の会話方針" value={nav.policy} />
-          <Info label="最初の切り口" value={nav.opening} />
-          <Info label="聞くべき質問" value={nav.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')} />
-          <Info label="深掘り質問" value={nav.deepQuestions.map((question) => `・${question}`).join('\n')} />
-          <Info label="聞いてはいけないこと" value={nav.ngActions.map((item) => `・${item}`).join('\n')} />
-          <Info label="売るべきか、聞くべきか" value={nav.sellOrAsk} />
-          <Info label="紹介依頼してよいか" value={nav.referralTiming} />
-          <Info label="会話後に記録すべき項目" value={nav.recordItems.map((item) => `・${item}`).join('\n')} />
-          <Info label="科学的根拠" value={nav.evidence.map((item) => `・${item}`).join('\n')} />
+          <View style={styles.navSummaryCard}>
+            <Info label="今日の目的" value={nav.purpose} compact />
+            <Info label="今日の到達点" value={nav.destination} compact />
+            <Info label="最初の一言" value={nav.opening} compact />
+            <Info label="今日のNG" value={nav.ngActions[0]} compact />
+          </View>
+
+          <View style={styles.questionPreview}>
+            <Text style={styles.questionPreviewTitle}>まず聞く質問</Text>
+            {nav.questions.slice(0, 2).map((question, index) => (
+              <Text key={question} style={styles.questionPreviewText}>
+                {index + 1}. {question}
+              </Text>
+            ))}
+          </View>
+
+          <Pressable style={styles.toggleRow} onPress={() => setShowNavDetails((value) => !value)}>
+            <Text style={styles.toggleText}>{showNavDetails ? '詳細ナビを閉じる' : '詳細ナビを開く'}</Text>
+          </Pressable>
+
+          {showNavDetails ? (
+            <>
+              <Info label="今日の会話方針" value={nav.policy} />
+              <Info label="聞くべき質問" value={nav.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')} />
+              <Info label="深掘り質問" value={nav.deepQuestions.map((question) => `・${question}`).join('\n')} />
+              <Info label="聞いてはいけないこと" value={nav.ngActions.map((item) => `・${item}`).join('\n')} />
+              <Info label="売るべきか、聞くべきか" value={nav.sellOrAsk} />
+              <Info label="紹介依頼してよいか" value={nav.referralTiming} />
+              <Info label="会話後に記録すべき項目" value={nav.recordItems.map((item) => `・${item}`).join('\n')} />
+              <Info label="科学的根拠" value={nav.evidence.map((item) => `・${item}`).join('\n')} />
+            </>
+          ) : null}
 
           <View style={styles.actionGrid}>
             <Pressable style={styles.secondaryCta} onPress={copyQuestions}>
@@ -1211,6 +1288,17 @@ const styles = StyleSheet.create({
   personSelectMeta: { color: '#475569', fontWeight: '800', marginTop: 5 },
   personSelectTags: { color: '#153E75', fontSize: 12, fontWeight: '900', marginTop: 7 },
   personSelectAction: { color: '#334155', lineHeight: 20, marginTop: 5 },
+  selectedPersonSummary: {
+    backgroundColor: '#0F172A',
+    borderRadius: 8,
+    marginTop: 10,
+    padding: 12,
+  },
+  selectedSummaryLabel: { color: '#CBD5E1', fontSize: 11, fontWeight: '900' },
+  selectedSummaryName: { color: '#FFFFFF', fontSize: 17, fontWeight: '900', marginTop: 3 },
+  selectedSummaryMeta: { color: '#E2E8F0', fontWeight: '800', marginTop: 4 },
+  selectedSummaryAction: { color: '#FFFFFF', lineHeight: 20, marginTop: 7 },
+  resultHint: { color: '#64748B', fontSize: 12, fontWeight: '900', marginTop: 12, marginBottom: 7 },
   guidanceText: {
     backgroundColor: '#F8FAFC',
     borderColor: '#E2E8F0',
@@ -1222,11 +1310,50 @@ const styles = StyleSheet.create({
     marginTop: 10,
     padding: 10,
   },
+  referenceSummaryCard: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12,
+  },
+  referenceSummaryTitle: { color: '#0F172A', fontSize: 15, fontWeight: '900' },
+  referenceSummaryText: { color: '#334155', lineHeight: 20, marginTop: 5 },
+  referenceSummaryCaution: { color: '#B45309', fontWeight: '900', lineHeight: 20, marginTop: 6 },
+  toggleRow: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    marginBottom: 10,
+    marginTop: 10,
+    minHeight: 42,
+  },
+  toggleText: { color: '#0F172A', fontWeight: '900' },
   referenceGrid: {
     columnGap: 12,
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
+  navSummaryCard: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 10,
+    padding: 12,
+  },
+  questionPreview: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12,
+  },
+  questionPreviewTitle: { color: '#0F172A', fontWeight: '900', marginBottom: 6 },
+  questionPreviewText: { color: '#153E75', fontWeight: '900', lineHeight: 21, marginTop: 4 },
   fullPrimaryButton: {
     alignItems: 'center',
     backgroundColor: '#153E75',
