@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { Bell, Bot, Plus, Search, UserPlus } from 'lucide-react-native';
+import { Bell, Bot, CheckCircle2, Clock3, Eye, Plus, Search, UserPlus } from 'lucide-react-native';
 import FilterChip from '../components/FilterChip';
 import PersonCard from '../components/PersonCard';
 import { MOCK_PEOPLE } from '../data/mockPeople';
@@ -74,8 +74,6 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
     return [...people].sort((a, b) => sortPeople(a, b, 'priority'));
   }, [people]);
 
-  const todayTargets = sortedPeople.slice(0, 3);
-
   const filteredPeople = useMemo(() => {
     const normalized = query.trim().toLowerCase();
 
@@ -121,7 +119,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
         <View style={styles.header}>
           <View style={styles.headerText}>
             <Text style={styles.appName}>紹介営業マップAI</Text>
-            <Text style={styles.subcopy}>出会いを営業資産に変える</Text>
+            <Text style={styles.subcopy}>今日の紹介機会を逃さない</Text>
           </View>
           <View style={styles.headerActions}>
             <Pressable style={styles.iconButton} onPress={openNotificationMock}>
@@ -135,15 +133,16 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
 
         <View style={styles.tabBar}>
           <TabButton label="ホーム" selected={activeTab === 'home'} onPress={() => setActiveTab('home')} />
-          <TabButton
-            label="人脈カード"
-            selected={activeTab === 'people'}
-            onPress={() => setActiveTab('people')}
-          />
+          <TabButton label="人脈カード" selected={activeTab === 'people'} onPress={() => setActiveTab('people')} />
         </View>
 
         {activeTab === 'home' ? (
-          <HomePane people={todayTargets} onOpenPerson={openPerson} onShowPeople={() => setActiveTab('people')} />
+          <HomePane
+            people={sortedPeople}
+            onOpenPerson={openPerson}
+            onShowPeople={() => setActiveTab('people')}
+            onOpenCoach={() => navigation.navigate('CoachChat')}
+          />
         ) : (
           <PeoplePane
             people={filteredPeople}
@@ -179,51 +178,105 @@ function HomePane({
   people,
   onOpenPerson,
   onShowPeople,
+  onOpenCoach,
 }: {
   people: Person[];
   onOpenPerson: (person?: Person) => void;
   onShowPeople: () => void;
+  onOpenCoach: () => void;
 }) {
+  const tanaka = people.find((person) => person.name.includes('田中')) ?? people[0];
+  const yamamoto = people.find((person) => person.name.includes('山本')) ?? people[1];
+  const sato = people.find((person) => person.name.includes('佐藤')) ?? people[2];
+
   return (
     <ScrollView contentContainerStyle={styles.homeContent} showsVerticalScrollIndicator={false}>
-      <View style={styles.navCard}>
-        <Text style={styles.navTitle}>今日の営業ナビ</Text>
-        <NavItem
-          index={1}
-          title={`${people[0]?.name ?? '田中さん'}に近況LINE`}
-          body="3日以内に軽く連絡。紹介依頼はまだ早い。"
-          onPress={() => onOpenPerson(people[0])}
-        />
-        <NavItem
-          index={2}
-          title={`${people[1]?.name ?? '山本さん'}の次回質問を確認`}
-          body="採用課題について深掘り。"
-          onPress={() => onOpenPerson(people[1])}
-        />
-        <NavItem
-          index={3}
-          title="紹介元候補を2人見返す"
-          body="美容業界の人脈を持つ人を確認。"
-          onPress={() => onShowPeople()}
-        />
-        <Text style={styles.navFooter}>今日の優先アクション：3件</Text>
+      <View style={styles.scoreGrid}>
+        <ScoreCard label="今日連絡すべき人" value="3人" tone="blue" />
+        <ScoreCard label="放置中の人脈" value="5人" tone="amber" />
+        <ScoreCard label="紹介チャンス" value="2件" tone="green" />
+        <ScoreCard label="未整理メモ" value="1件" tone="purple" />
       </View>
 
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>今日連絡すべき人</Text>
-        <Pressable onPress={onShowPeople}>
-          <Text style={styles.sectionLink}>一覧を見る</Text>
+      <Section title="今日の必達アクション" subtitle="朝と移動中にここだけ見れば、今日の動きが決まります。">
+        <ActionCard
+          person={tanaka}
+          label="紹介元候補"
+          purpose="美容業界の人脈を確認する"
+          reason="前回接触から3日。関係が冷める前に軽く接触すべき。"
+          todo="近況LINEを送り、美容業界の採用課題を聞く"
+          question="美容系の経営者さんって、最近は集客より採用の方が大変だったりしますか？"
+          onOpenPerson={onOpenPerson}
+        />
+        <ActionCard
+          person={yamamoto}
+          label="顧客候補"
+          purpose="健康経営や固定費の悩みを確認する"
+          reason="紹介直後は記憶が残っているため、情報提供の入口を作りやすい。"
+          todo="売り込みではなく、整体院経営で負担になっている固定費を聞く"
+          question="最近、院の経営で一番見直したい固定費は何ですか？"
+          onOpenPerson={onOpenPerson}
+        />
+      </Section>
+
+      <Section title="機会損失アラート" subtitle="紹介営業で取りこぼしやすい穴を先に塞ぎます。">
+        <AlertRow title="紹介されたが分類していない人" count="2人" onPress={onShowPeople} />
+        <AlertRow title="次アクション未設定" count="3人" onPress={onShowPeople} />
+        <AlertRow title="紹介元候補なのに紹介依頼ルート未作成" count="2人" onPress={onShowPeople} />
+        <AlertRow title="将来候補なのに追客日未設定" count="4人" onPress={onShowPeople} />
+        <AlertRow title="情報源候補なのに質問が未設定" count="1人" onPress={onShowPeople} />
+      </Section>
+
+      <Section title="紹介チャンス" subtitle="誰に聞くか、誰をつなぐかを地図のように見ます。">
+        <ChanceCard
+          title="紹介依頼できそうな人"
+          name="田中さん"
+          body="美容業界の経営者人脈を持っている可能性。"
+          onPress={() => onOpenPerson(tanaka)}
+        />
+        <ChanceCard
+          title="誰かに紹介すると関係が深まりそうな人"
+          name="山本さん"
+          body="採用に困っているため、人材系の知人と繋げる余地あり。"
+          onPress={() => onOpenPerson(yamamoto)}
+        />
+        <ChanceCard
+          title="情報源として聞くべき人"
+          name="佐藤さん"
+          body="不動産営業。資産形成層の動きを聞ける可能性。"
+          onPress={() => onOpenPerson(sato)}
+        />
+      </Section>
+
+      <Section title="会話前ナビ" subtitle="初回面談・交流会・紹介前に見る切り口です。">
+        <InfoBlock label="次に会う人" value="美容サロン経営者" />
+        <InfoBlock label="おすすめの切り口" value="採用・集客・スタッフ定着" />
+        <InfoBlock label="最初の質問" value="最近、美容系って集客より採用の方が大変だったりします？" />
+        <InfoBlock label="注意点" value="いきなり保険の話をしない。まず業界課題を聞く。" />
+      </Section>
+
+      <Section title="未整理メモ" subtitle="入力は軽く、整理はあとで。">
+        <Text style={styles.bodyText}>昨日の交流会メモが1件あります</Text>
+        <Text style={styles.bodyText}>最近追加した人：田中さん、山本さん、佐藤さん</Text>
+        <Pressable style={styles.secondaryCta} onPress={onShowPeople}>
+          <Text style={styles.secondaryCtaText}>AIで整理する</Text>
         </Pressable>
-      </View>
+      </Section>
 
-      {people.length > 0 ? (
-        people.map((person) => <PersonCard key={person.id} person={person} onPress={() => onOpenPerson(person)} />)
-      ) : (
-        <View style={styles.empty}>
-          <Text style={styles.emptyTitle}>今日動く対象がまだありません</Text>
-          <Text style={styles.emptyText}>人物追加からサンプル入力を試すと、ここに対象人物が表示されます。</Text>
-        </View>
-      )}
+      <Section title="営業コーチからの一言" subtitle="行動の偏りを、次の一手に変えます。">
+        <InfoBlock
+          label="今週の傾向"
+          value="初回接触は増えていますが、紹介依頼まで進める人数が少ないです。"
+        />
+        <InfoBlock
+          label="今日の改善アクション"
+          value="紹介元候補の中から1人だけ、情報交換のLINEを送りましょう。"
+        />
+        <Pressable style={styles.primaryCta} onPress={onOpenCoach}>
+          <Bot color="#FFFFFF" size={18} />
+          <Text style={styles.primaryCtaText}>営業コーチに相談する</Text>
+        </Pressable>
+      </Section>
     </ScrollView>
   );
 }
@@ -327,40 +380,101 @@ function PeoplePane({
   );
 }
 
-function TabButton({
+function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.sectionCard}>
+      <Text style={styles.sectionTitle}>{title}</Text>
+      {subtitle ? <Text style={styles.sectionSubtitle}>{subtitle}</Text> : null}
+      <View style={styles.sectionBody}>{children}</View>
+    </View>
+  );
+}
+
+function ScoreCard({ label, value, tone }: { label: string; value: string; tone: 'blue' | 'amber' | 'green' | 'purple' }) {
+  return (
+    <View style={[styles.scoreCard, styles[`score_${tone}`]]}>
+      <Text style={styles.scoreLabel}>{label}</Text>
+      <Text style={styles.scoreValue}>{value}</Text>
+    </View>
+  );
+}
+
+function ActionCard({
+  person,
   label,
-  selected,
-  onPress,
+  purpose,
+  reason,
+  todo,
+  question,
+  onOpenPerson,
 }: {
+  person?: Person;
   label: string;
-  selected: boolean;
-  onPress: () => void;
+  purpose: string;
+  reason: string;
+  todo: string;
+  question: string;
+  onOpenPerson: (person?: Person) => void;
 }) {
   return (
-    <Pressable style={[styles.tabButton, selected && styles.tabButtonSelected]} onPress={onPress}>
-      <Text style={[styles.tabButtonText, selected && styles.tabButtonTextSelected]}>{label}</Text>
+    <Pressable style={styles.actionCard} onPress={() => onOpenPerson(person)}>
+      <Text style={styles.actionTitle}>
+        {person?.name ?? '対象人物'}｜{label}
+      </Text>
+      <InfoBlock label="目的" value={purpose} />
+      <InfoBlock label="なぜ今" value={reason} />
+      <InfoBlock label="今日やること" value={todo} />
+      <InfoBlock label="次に聞く質問" value={question} />
+      <View style={styles.actionButtons}>
+        <SmallButton icon={<Eye color="#153E75" size={14} />} label="LINE文を見る" />
+        <SmallButton icon={<CheckCircle2 color="#166534" size={14} />} label="完了" />
+        <SmallButton icon={<Clock3 color="#92400E" size={14} />} label="延期" />
+      </View>
     </Pressable>
   );
 }
 
-function NavItem({
-  index,
-  title,
-  body,
-  onPress,
-}: {
-  index: number;
-  title: string;
-  body: string;
-  onPress: () => void;
-}) {
+function AlertRow({ title, count, onPress }: { title: string; count: string; onPress: () => void }) {
   return (
-    <Pressable style={styles.navItem} onPress={onPress}>
-      <Text style={styles.navIndex}>{index}.</Text>
-      <View style={styles.navBody}>
-        <Text style={styles.navItemTitle}>{title}</Text>
-        <Text style={styles.navItemBody}>{body}</Text>
-      </View>
+    <Pressable style={styles.alertRow} onPress={onPress}>
+      <Text style={styles.alertTitle}>{title}</Text>
+      <Text style={styles.alertCount}>{count}</Text>
+    </Pressable>
+  );
+}
+
+function ChanceCard({ title, name, body, onPress }: { title: string; name: string; body: string; onPress: () => void }) {
+  return (
+    <Pressable style={styles.chanceCard} onPress={onPress}>
+      <Text style={styles.chanceTitle}>{title}</Text>
+      <Text style={styles.chanceName}>{name}</Text>
+      <Text style={styles.bodyText}>{body}</Text>
+    </Pressable>
+  );
+}
+
+function InfoBlock({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.infoBlock}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value}</Text>
+    </View>
+  );
+}
+
+function SmallButton({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <View style={styles.smallButton}>
+      {icon}
+      <Text style={styles.smallButtonText}>{label}</Text>
+    </View>
+  );
+}
+
+function TabButton({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+  return (
+    <Pressable style={[styles.tabButton, selected && styles.tabButtonSelected]} onPress={onPress}>
+      <Text style={[styles.tabButtonText, selected && styles.tabButtonTextSelected]}>{label}</Text>
     </Pressable>
   );
 }
@@ -426,7 +540,7 @@ const styles = StyleSheet.create({
   },
   appName: {
     color: '#0F172A',
-    fontSize: 26,
+    fontSize: 25,
     fontWeight: '900',
   },
   subcopy: {
@@ -488,67 +602,186 @@ const styles = StyleSheet.create({
   listContent: {
     paddingBottom: 100,
   },
-  navCard: {
+  scoreGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 12,
+  },
+  scoreCard: {
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12,
+    width: '48.5%',
+  },
+  score_blue: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  score_amber: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  score_green: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+  },
+  score_purple: {
+    backgroundColor: '#FAF5FF',
+    borderColor: '#E9D5FF',
+  },
+  scoreLabel: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  scoreValue: {
+    color: '#0F172A',
+    fontSize: 24,
+    fontWeight: '900',
+    marginTop: 4,
+  },
+  sectionCard: {
     backgroundColor: '#FFFFFF',
-    borderColor: '#D7DEE8',
+    borderColor: '#E2E8F0',
     borderRadius: 8,
     borderWidth: 1,
     marginBottom: 12,
     padding: 16,
   },
-  navTitle: {
+  sectionTitle: {
     color: '#0F172A',
     fontSize: 18,
     fontWeight: '900',
-    marginBottom: 8,
   },
-  navItem: {
+  sectionSubtitle: {
+    color: '#64748B',
+    lineHeight: 20,
+    marginTop: 5,
+  },
+  sectionBody: {
+    marginTop: 12,
+  },
+  actionCard: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
     borderRadius: 8,
-    flexDirection: 'row',
-    gap: 10,
-    paddingVertical: 10,
+    borderWidth: 1,
+    marginBottom: 10,
+    padding: 12,
   },
-  navIndex: {
+  actionTitle: {
     color: '#153E75',
     fontSize: 16,
     fontWeight: '900',
-    width: 22,
+    marginBottom: 8,
   },
-  navBody: {
-    flex: 1,
+  infoBlock: {
+    marginBottom: 10,
   },
-  navItemTitle: {
-    color: '#0F172A',
-    fontWeight: '900',
-  },
-  navItemBody: {
-    color: '#64748B',
-    lineHeight: 20,
-    marginTop: 3,
-  },
-  navFooter: {
-    borderTopColor: '#E2E8F0',
-    borderTopWidth: 1,
+  infoLabel: {
     color: '#64748B',
     fontSize: 12,
     fontWeight: '900',
-    marginTop: 8,
-    paddingTop: 12,
   },
-  sectionHeader: {
+  infoValue: {
+    color: '#0F172A',
+    lineHeight: 21,
+    marginTop: 3,
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+  },
+  smallButton: {
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 4,
+    minHeight: 34,
+    paddingHorizontal: 10,
+  },
+  smallButtonText: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  alertRow: {
+    alignItems: 'center',
+    backgroundColor: '#FFF7ED',
+    borderColor: '#FED7AA',
+    borderRadius: 8,
+    borderWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 8,
+    padding: 12,
   },
-  sectionTitle: {
+  alertTitle: {
+    color: '#7C2D12',
+    flex: 1,
+    fontWeight: '900',
+    paddingRight: 10,
+  },
+  alertCount: {
+    color: '#C2410C',
+    fontWeight: '900',
+  },
+  chanceCard: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 8,
+    padding: 12,
+  },
+  chanceTitle: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  chanceName: {
     color: '#0F172A',
     fontSize: 16,
     fontWeight: '900',
+    marginTop: 3,
   },
-  sectionLink: {
+  bodyText: {
+    color: '#334155',
+    lineHeight: 22,
+    marginBottom: 6,
+  },
+  primaryCta: {
+    alignItems: 'center',
+    backgroundColor: '#153E75',
+    borderRadius: 8,
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    marginTop: 4,
+    minHeight: 48,
+  },
+  primaryCtaText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+  },
+  secondaryCta: {
+    alignItems: 'center',
+    backgroundColor: '#EAF2FF',
+    borderColor: '#B8D4FF',
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    marginTop: 8,
+    minHeight: 44,
+  },
+  secondaryCtaText: {
     color: '#153E75',
-    fontSize: 13,
     fontWeight: '900',
   },
   searchBox: {
