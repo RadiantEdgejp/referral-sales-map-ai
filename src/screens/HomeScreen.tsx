@@ -208,10 +208,31 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           </View>
         </View>
 
-        <View style={styles.tabBar}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabBar}
+          contentContainerStyle={styles.tabBarContent}
+        >
           <TabButton label="ホーム" selected={activeTab === 'home'} onPress={() => setActiveTab('home')} />
           <TabButton label="人脈カード" selected={activeTab === 'people'} onPress={() => setActiveTab('people')} />
-        </View>
+          <TabButton
+            label="予定前ナビ"
+            selected={false}
+            onPress={() => navigation.navigate('PreMeetingNav', { personId: actions[0]?.personId, purpose: '初回接触' })}
+          />
+          <TabButton
+            label="後メモ"
+            selected={false}
+            onPress={() => navigation.navigate('AfterMemo', { personId: actions[0]?.personId })}
+          />
+          <TabButton
+            label="LINEチェック"
+            selected={false}
+            onPress={() => navigation.navigate('LineCheck', { personId: actions[0]?.personId })}
+          />
+          <TabButton label="終業後チェック" selected={false} onPress={() => navigation.navigate('EndOfDayCheck')} />
+        </ScrollView>
 
         {activeTab === 'home' ? (
           <HomePane
@@ -222,10 +243,6 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             planUpdated={planUpdated}
             onOpenModal={setModal}
             onOpenPeople={() => setActiveTab('people')}
-            onOpenPreMeeting={() => navigation.navigate('PreMeetingNav', { personId: actions[0]?.personId, purpose: '初回接触' })}
-            onOpenAfterMemo={() => navigation.navigate('AfterMemo', { personId: actions[0]?.personId })}
-            onOpenLineCheck={() => navigation.navigate('LineCheck', { personId: actions[0]?.personId })}
-            onOpenEndOfDay={() => navigation.navigate('EndOfDayCheck')}
             onOpenCoach={() => navigation.navigate('CoachChat', { initialPrompt: COACH_PREFILL })}
           />
         ) : (
@@ -280,10 +297,6 @@ function HomePane({
   planUpdated,
   onOpenModal,
   onOpenPeople,
-  onOpenPreMeeting,
-  onOpenAfterMemo,
-  onOpenLineCheck,
-  onOpenEndOfDay,
   onOpenCoach,
 }: {
   actions: TodayAction[];
@@ -293,10 +306,6 @@ function HomePane({
   planUpdated: boolean;
   onOpenModal: (modal: ModalState) => void;
   onOpenPeople: () => void;
-  onOpenPreMeeting: () => void;
-  onOpenAfterMemo: () => void;
-  onOpenLineCheck: () => void;
-  onOpenEndOfDay: () => void;
   onOpenCoach: () => void;
 }) {
   return (
@@ -311,13 +320,6 @@ function HomePane({
           compact
         />
         {planUpdated ? <Text style={styles.updatedNotice}>今日の計画を更新済み</Text> : null}
-      </Section>
-
-      <Section title="営業データを育てる今日のループ" subtitle="予定前に質問を決め、会話後に回答を入れ、LINEと終業後チェックで人脈カードへ戻します。">
-        <LoopStep index="1" title="予定前ナビ" body="人脈カード・過去メモ・追加メモから、今日聞く質問を決める" onPress={onOpenPreMeeting} />
-        <LoopStep index="2" title="後メモ" body="予定前ナビで決めた質問の回答を入れ、人脈カード更新案を作る" onPress={onOpenAfterMemo} />
-        <LoopStep index="3" title="LINEチェック" body="LINEの送受信から温度感・課題・次アクションを吸収する" onPress={onOpenLineCheck} />
-        <LoopStep index="4" title="終業後チェック" body="未入力・更新漏れを確認し、翌日のホームへ反映する" onPress={onOpenEndOfDay} />
       </Section>
 
       <Section title="今日の優先行動" subtitle="短い行カードで、誰に・なぜ・何をするかだけ確認します。">
@@ -712,28 +714,6 @@ function RouteRow({ item, onPress }: { item: RouteItem; onPress: () => void }) {
   );
 }
 
-function LoopStep({
-  index,
-  title,
-  body,
-  onPress,
-}: {
-  index: string;
-  title: string;
-  body: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable style={styles.loopStep} onPress={onPress}>
-      <Text style={styles.loopIndex}>{index}</Text>
-      <View style={styles.loopBody}>
-        <Text style={styles.rowName}>{title}</Text>
-        <Text style={styles.rowMeta}>{body}</Text>
-      </View>
-    </Pressable>
-  );
-}
-
 function PostMeetingLine({ title, body }: { title: string; body: string }) {
   return (
     <View style={styles.postLine}>
@@ -1050,17 +1030,21 @@ const styles = StyleSheet.create({
   tabBar: {
     backgroundColor: '#E2E8F0',
     borderRadius: 8,
-    flexDirection: 'row',
-    gap: 4,
+    flexGrow: 0,
     marginBottom: 12,
     padding: 4,
+  },
+  tabBarContent: {
+    gap: 4,
+    paddingRight: 4,
   },
   tabButton: {
     alignItems: 'center',
     borderRadius: 6,
-    flex: 1,
     justifyContent: 'center',
     minHeight: 40,
+    minWidth: 108,
+    paddingHorizontal: 12,
   },
   tabButtonSelected: {
     backgroundColor: '#FFFFFF',
@@ -1219,29 +1203,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginBottom: 8,
     padding: 12,
-  },
-  loopStep: {
-    alignItems: 'flex-start',
-    backgroundColor: '#F8FAFC',
-    borderColor: '#E2E8F0',
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 8,
-    padding: 12,
-  },
-  loopIndex: {
-    backgroundColor: '#153E75',
-    borderRadius: 999,
-    color: '#FFFFFF',
-    fontWeight: '900',
-    overflow: 'hidden',
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-  },
-  loopBody: {
-    flex: 1,
   },
   prepCard: {
     backgroundColor: '#F8FAFC',
