@@ -1083,7 +1083,7 @@ function LegacyAfterMemoPane({
   );
 }
 
-const LINE_CHECK_TYPES = ['送信前チェック', '受信文チェック', '返信作成', 'スクショメモ', '音声メモ', '断り返信', '紹介依頼文', 'お礼文'] as const;
+const LINE_CHECK_TYPES = ['受信文チェック', '返信作成', '送信前チェック', '断り返信', '紹介依頼文', 'お礼文', 'スクショメモ', '音声メモ'] as const;
 const LINE_PERSON_FILTERS = ['今日予定', '最近やり取り', '次アクションあり', '返信待ち', '最近追加', '全員'] as const;
 const LINE_NOTICE_OPTIONS = ['明日 9:00', '3日後 9:00', '1週間後 9:00', '返信がなければ3日後', '通知なし'];
 
@@ -1227,8 +1227,8 @@ function LineCheckPane({
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <View style={styles.paneHeaderRow}>
         <View style={styles.paneHeaderText}>
-          <Text style={styles.paneTitle}>文面確認</Text>
-          <Text style={styles.paneSubcopy}>送る前に確認し、相手の返信を営業データに変える</Text>
+          <Text style={styles.paneTitle}>受信文チェック</Text>
+          <Text style={styles.paneSubcopy}>相手の返信を貼るだけで、返信・保存・次アクションまで整理する</Text>
         </View>
         <View style={styles.paneHeaderActions}>
           <Pressable style={styles.smallOutlineButton} onPress={() => onOpenPerson(selectedPerson?.id)}>
@@ -1323,7 +1323,7 @@ function LineCheckPane({
         </View>
       </Modal>
 
-      <Section title="チェック種別">
+      <Section title="チェック種別" subtitle="基本は受信文チェックのままでOK。必要な時だけ切り替えます。">
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
           {LINE_CHECK_TYPES.map((item) => (
             <FilterChip
@@ -1340,7 +1340,7 @@ function LineCheckPane({
         <Text style={styles.guidanceText}>{typeGuide}</Text>
       </Section>
 
-      <Section title="文面・メモを入力" subtitle="送る文、届いた文、スクショメモ、音声メモの文字起こしをここに入れます。">
+      <Section title="相手から来た文を貼る" subtitle="LINE・DM・メールの返信をそのまま貼ります。スクショや音声メモは、内容を雑に書けばOKです。">
         <TextInput
           value={messageText}
           onChangeText={(value) => {
@@ -1398,19 +1398,25 @@ function LineCheckPane({
       </Section>
 
       <Pressable style={styles.fullPrimaryButton} onPress={checkMessage}>
-        <Text style={styles.fullPrimaryText}>文面をチェックする</Text>
+        <Text style={styles.fullPrimaryText}>AIで返信と更新案を作る</Text>
       </Pressable>
 
       {hasChecked ? (
         <>
-          <Section title="分析結果" subtitle={`${selectedPerson?.name ?? '相手未選択'} / ${checkType}`}>
-            <LineResultCard title="判定" body={analysis.judgement} />
+          <Section title="AIの結論" subtitle={`${selectedPerson?.name ?? '相手未選択'} / ${checkType}`}>
+            <LineResultCard title="今どう返すか" body={analysis.judgement} />
+            <LineResultCard title="返信文案" body={analysis.replyDraft} />
+            <LineResultCard title="次にやること" body={`${analysis.nextAction}\n次回連絡：${analysis.nextContact}`} />
+          </Section>
+
+          <Section title="人脈カードに保存する内容" subtitle="この返信から営業データとして蓄積する項目です。">
+            <LineResultCard title="保存される要点" body={analysis.cardUpdate} />
+            <LineResultCard title="次に聞く質問" body={`${analysis.nextQuestion}\n\n目的：${analysis.questionPurpose}`} />
+          </Section>
+
+          <Section title="詳細分析" subtitle="必要な時だけ読む確認情報です。">
             <LineResultCard title="相手の温度感" body={`${analysis.temperature.label}\n理由：${analysis.temperature.reason}`} />
             <LineResultCard title="抽出された情報" body={analysis.extracted.map((item) => `・${item.label}：${item.value}`).join('\n')} />
-            <LineResultCard title="次に聞くべき質問" body={`${analysis.nextQuestion}\n\n質問の目的：${analysis.questionPurpose}`} />
-            <LineResultCard title="返信文案" body={analysis.replyDraft} />
-            <LineResultCard title="人脈カード更新案" body={analysis.cardUpdate} />
-            <LineResultCard title="次アクション" body={`${analysis.nextAction}\n次回連絡日：${analysis.nextContact}`} />
             <LineResultCard title="注意点" body={analysis.caution} />
             <LineResultCard title="営業フィードバック" body={`良い点：${analysis.feedbackGood}\n改善点：${analysis.feedbackImprove}`} />
           </Section>
