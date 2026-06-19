@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Bot, ClipboardList, FileText } from 'lucide-react-native';
+import AttachmentTextInput from '../components/AttachmentTextInput';
 import FilterChip from '../components/FilterChip';
 import SectionCard from '../components/SectionCard';
 import { getPeople } from '../storage/personStorage';
@@ -52,14 +53,12 @@ export default function PreMeetingNavScreen({ navigation, route }: ScreenProps<'
       </ScrollView>
 
       <Text style={styles.label}>追加メモ</Text>
-      <TextInput
+      <AttachmentTextInput
         value={memo}
         onChangeText={setMemo}
         placeholder="今日聞きたいこと、相手の返信、紹介者情報など"
-        placeholderTextColor="#94A3B8"
-        multiline
-        textAlignVertical="top"
-        style={styles.input}
+        minHeight={100}
+        backgroundColor="#FFFFFF"
       />
 
       <SectionCard title="参照している人脈カード情報">
@@ -130,17 +129,6 @@ const styles = StyleSheet.create({
   subcopy: { color: '#64748B', fontWeight: '800', lineHeight: 20, marginTop: 4, marginBottom: 14 },
   label: { color: '#0F172A', fontWeight: '900', marginBottom: 8, marginTop: 10 },
   row: { flexGrow: 0, marginBottom: 4 },
-  input: {
-    minHeight: 100,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D7DEE8',
-    borderRadius: 8,
-    padding: 12,
-    color: '#0F172A',
-    lineHeight: 22,
-    marginBottom: 12,
-  },
   info: { marginBottom: 10 },
   infoLabel: { color: '#64748B', fontSize: 12, fontWeight: '900' },
   infoValue: { color: '#0F172A', lineHeight: 21, marginTop: 3 },

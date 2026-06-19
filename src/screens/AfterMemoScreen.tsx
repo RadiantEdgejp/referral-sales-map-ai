@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Bot, Bell, MessageSquare, Save } from 'lucide-react-native';
+import AttachmentTextInput from '../components/AttachmentTextInput';
 import SectionCard from '../components/SectionCard';
 import { getPeople } from '../storage/personStorage';
 import type { ScreenProps } from '../types/navigation';
@@ -34,28 +35,23 @@ export default function AfterMemoScreen({ navigation, route }: ScreenProps<'Afte
         {questions.map((question) => (
           <View key={question} style={styles.answerBlock}>
             <Text style={styles.question}>{question}</Text>
-            <TextInput
+            <AttachmentTextInput
               value={answers[question] ?? ''}
               onChangeText={(value) => setAnswers((current) => ({ ...current, [question]: value }))}
               placeholder="相手の回答を入力"
-              placeholderTextColor="#94A3B8"
-              multiline
-              textAlignVertical="top"
-              style={styles.answerInput}
+              minHeight={74}
+              compact
             />
           </View>
         ))}
       </SectionCard>
 
       <SectionCard title="営業データとして記録するもの">
-        <TextInput
+        <AttachmentTextInput
           value={memo}
           onChangeText={setMemo}
           placeholder="話した内容、悩み、温度感、紹介できそうな人、違和感、断られた理由、次回連絡タイミングなど"
-          placeholderTextColor="#94A3B8"
-          multiline
-          textAlignVertical="top"
-          style={styles.memoInput}
+          minHeight={128}
         />
       </SectionCard>
 
@@ -108,8 +104,6 @@ const styles = StyleSheet.create({
   subcopy: { color: '#64748B', fontWeight: '800', lineHeight: 20, marginTop: 4, marginBottom: 14 },
   answerBlock: { marginBottom: 12 },
   question: { color: '#153E75', fontWeight: '900', lineHeight: 20, marginBottom: 6 },
-  answerInput: { minHeight: 74, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#D7DEE8', borderRadius: 8, padding: 10, color: '#0F172A' },
-  memoInput: { minHeight: 128, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#D7DEE8', borderRadius: 8, padding: 12, color: '#0F172A', lineHeight: 22 },
   info: { marginBottom: 10 },
   infoLabel: { color: '#64748B', fontSize: 12, fontWeight: '900' },
   infoValue: { color: '#0F172A', lineHeight: 21, marginTop: 3 },

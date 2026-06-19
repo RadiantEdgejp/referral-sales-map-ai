@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Bot, Clipboard, FileText, MessageCircle, Save } from 'lucide-react-native';
+import AttachmentTextInput from '../components/AttachmentTextInput';
 import FilterChip from '../components/FilterChip';
 import SectionCard from '../components/SectionCard';
 import { getPeople } from '../storage/personStorage';
@@ -33,14 +34,12 @@ export default function LineCheckScreen({ navigation, route }: ScreenProps<'Line
       </View>
 
       <Text style={styles.label}>LINE文・相手の発言</Text>
-      <TextInput
+      <AttachmentTextInput
         value={text}
         onChangeText={setText}
         placeholder="送る文、相手から来た文、スクショ内容、音声入力メモなど"
-        placeholderTextColor="#94A3B8"
-        multiline
-        textAlignVertical="top"
-        style={styles.input}
+        minHeight={140}
+        backgroundColor="#FFFFFF"
       />
 
       {mode === 'send' ? (
@@ -109,7 +108,6 @@ const styles = StyleSheet.create({
   subcopy: { color: '#64748B', fontWeight: '800', lineHeight: 20, marginTop: 4, marginBottom: 14 },
   label: { color: '#0F172A', fontWeight: '900', marginBottom: 8, marginTop: 10 },
   modeRow: { flexDirection: 'row', marginBottom: 8 },
-  input: { minHeight: 140, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D7DEE8', borderRadius: 8, padding: 12, color: '#0F172A', lineHeight: 22, marginBottom: 12 },
   metric: { marginBottom: 10 },
   metricLabel: { color: '#64748B', fontSize: 12, fontWeight: '900' },
   metricValue: { color: '#0F172A', lineHeight: 21, marginTop: 3 },

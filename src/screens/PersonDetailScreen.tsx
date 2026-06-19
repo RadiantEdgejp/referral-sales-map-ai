@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Bell, CalendarClock } from 'lucide-react-native';
+import AttachmentTextInput from '../components/AttachmentTextInput';
 import SectionCard from '../components/SectionCard';
 import { scheduleContactNotification } from '../notifications/notificationService';
 import { getPeople, updatePerson } from '../storage/personStorage';
@@ -135,14 +136,11 @@ export default function PersonDetailScreen({ route }: ScreenProps<'PersonDetail'
       </SectionCard>
 
       <SectionCard title="追加メモ">
-        <TextInput
+        <AttachmentTextInput
           value={additionalMemo}
           onChangeText={setAdditionalMemo}
           placeholder="次に会った時の印象、紹介できそうな人、気づいたことなど"
-          placeholderTextColor="#94A3B8"
-          multiline
-          textAlignVertical="top"
-          style={styles.memoInput}
+          minHeight={108}
         />
         <Pressable
           style={styles.primaryButton}
@@ -348,16 +346,5 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     width: 26,
     textAlign: 'right',
-  },
-  memoInput: {
-    minHeight: 108,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#D7DEE8',
-    borderRadius: 8,
-    padding: 12,
-    color: '#0F172A',
-    fontSize: 15,
-    lineHeight: 22,
   },
 });

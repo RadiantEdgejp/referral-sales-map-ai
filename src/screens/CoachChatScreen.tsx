@@ -6,10 +6,10 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { Send } from 'lucide-react-native';
+import AttachmentTextInput from '../components/AttachmentTextInput';
 import FilterChip from '../components/FilterChip';
 import SectionCard from '../components/SectionCard';
 import { createCoachMockAnswer } from '../data/mockAnalysis';
@@ -73,14 +73,12 @@ export default function CoachChatScreen({ route }: ScreenProps<'CoachChat'>) {
         )}
 
         <Text style={styles.label}>悩み</Text>
-        <TextInput
+        <AttachmentTextInput
           value={problem}
           onChangeText={setProblem}
           placeholder="例：この人に紹介依頼していい？ このLINE重い？"
-          placeholderTextColor="#94A3B8"
-          multiline
-          textAlignVertical="top"
-          style={styles.input}
+          minHeight={132}
+          backgroundColor="#FFFFFF"
         />
 
         <Pressable
@@ -162,17 +160,6 @@ const styles = StyleSheet.create({
   selectedText: {
     color: '#153E75',
     fontWeight: '800',
-  },
-  input: {
-    minHeight: 132,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D7DEE8',
-    borderRadius: 8,
-    padding: 14,
-    color: '#0F172A',
-    fontSize: 15,
-    lineHeight: 22,
   },
   submitButton: {
     minHeight: 52,

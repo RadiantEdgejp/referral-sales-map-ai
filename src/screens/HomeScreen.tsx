@@ -19,12 +19,8 @@ import {
   ClipboardPenLine,
   Compass,
   House,
-  Image as ImageIcon,
   MessageSquareText,
-  Mic,
   Moon,
-  MoreHorizontal,
-  Paperclip,
   Plus,
   RefreshCw,
   Search,
@@ -32,6 +28,7 @@ import {
   UsersRound,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
+import AttachmentTextInput from '../components/AttachmentTextInput';
 import FilterChip from '../components/FilterChip';
 import PersonCard from '../components/PersonCard';
 import { MOCK_PEOPLE } from '../data/mockPeople';
@@ -709,31 +706,12 @@ function PreMeetingPane({
       </Section>
 
       <Section title="今日の追加メモ">
-        <TextInput
+        <AttachmentTextInput
           value={memo}
           onChangeText={setMemo}
           placeholder="例：今日13時に会う。採用の話を少し聞きたい。紹介依頼はまだ早そう。相手は忙しそうなので短く聞きたい。"
-          placeholderTextColor="#94A3B8"
-          multiline
-          textAlignVertical="top"
-          style={styles.largeInput}
+          minHeight={132}
         />
-        <View style={styles.inlineActions}>
-          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('音声入力', 'スマホ版で音声入力を開く想定です。')}>
-            <Text style={styles.secondaryCtaText}>音声入力</Text>
-          </Pressable>
-          <Pressable style={styles.secondaryCta} onPress={() => setMemo('')}>
-            <Text style={styles.secondaryCtaText}>クリア</Text>
-          </Pressable>
-          <Pressable
-            style={styles.secondaryCta}
-            onPress={() =>
-              setMemo('今日13時に情報交換予定。美容業界の採用や集客の悩みを聞きたい。まだ紹介依頼はせず、まずは業界課題を聞く。')
-            }
-          >
-            <Text style={styles.secondaryCtaText}>サンプル</Text>
-          </Pressable>
-        </View>
       </Section>
 
       <Pressable
@@ -944,14 +922,12 @@ function AfterMemoPane({
         {questions.map((question) => (
           <View key={question} style={styles.questionBlock}>
             <Text style={styles.questionText}>{question}</Text>
-            <TextInput
+            <AttachmentTextInput
               value={answers[question] ?? ''}
               onChangeText={(value) => setAnswer(question, value)}
               placeholder="相手の回答をそのまま入力"
-              placeholderTextColor="#94A3B8"
-              multiline
-              textAlignVertical="top"
-              style={styles.compactInput}
+              minHeight={76}
+              compact
             />
           </View>
         ))}
@@ -1057,12 +1033,10 @@ function LegacyAfterMemoPane({
         {['最近、採用と集客どちらが大変ですか？', '周りの経営者も同じ悩みを持っていますか？'].map((question) => (
           <View key={question} style={styles.questionBlock}>
             <Text style={styles.questionText}>{question}</Text>
-            <TextInput
+            <AttachmentTextInput
               placeholder="相手の回答を入力"
-              placeholderTextColor="#94A3B8"
-              multiline
-              textAlignVertical="top"
-              style={styles.compactInput}
+              minHeight={76}
+              compact
             />
           </View>
         ))}
@@ -1119,7 +1093,6 @@ function LineCheckPane({
   const [copyNotice, setCopyNotice] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
-  const [toolMenuOpen, setToolMenuOpen] = useState(false);
 
   const candidates = useMemo(() => dedupePeople(people), [people]);
   const currentPersonId = selectedPersonId ?? personId ?? candidates[0]?.id;
@@ -1341,96 +1314,16 @@ function LineCheckPane({
       </Section>
 
       <Section title="相手から来た文を貼る" subtitle="LINE・DM・メールの返信をそのまま貼ります。スクショや音声メモは、内容を雑に書けばOKです。">
-        <TextInput
+        <AttachmentTextInput
           value={messageText}
           onChangeText={(value) => {
             setMessageText(value);
             resetResult();
           }}
           placeholder="例：相手から「最近はリピート率が課題ですね。新規は来るけど続かないです」と返信が来た。"
-          placeholderTextColor="#94A3B8"
-          multiline
-          textAlignVertical="top"
-          style={styles.largeInput}
+          minHeight={132}
         />
-        <View style={styles.messageToolRow}>
-          <Pressable
-            accessibilityLabel="ファイル添付"
-            style={styles.messageToolButton}
-            onPress={() => Alert.alert('ファイル添付', '初期UIでは見た目だけです。後でPDFや資料添付を追加します。')}
-          >
-            <Paperclip color="#0F172A" size={20} />
-          </Pressable>
-          <Pressable
-            accessibilityLabel="画像添付"
-            style={styles.messageToolButton}
-            onPress={() => Alert.alert('画像添付', '初期UIでは見た目だけです。後でスクショ読み取りを追加します。')}
-          >
-            <ImageIcon color="#0F172A" size={20} />
-          </Pressable>
-          <Pressable
-            accessibilityLabel="音声入力"
-            style={styles.messageToolButton}
-            onPress={() => Alert.alert('音声入力', '初期UIでは見た目だけです。後で音声メモ入力を追加します。')}
-          >
-            <Mic color="#0F172A" size={20} />
-          </Pressable>
-          <Pressable accessibilityLabel="その他" style={styles.messageToolButton} onPress={() => setToolMenuOpen(true)}>
-            <MoreHorizontal color="#0F172A" size={22} />
-          </Pressable>
-        </View>
       </Section>
-
-      <Modal visible={toolMenuOpen} transparent animationType="fade" onRequestClose={() => setToolMenuOpen(false)}>
-        <View style={styles.sheetBackdrop}>
-          <View style={styles.personPickerSheet}>
-            <View style={styles.sheetHeader}>
-              <View>
-                <Text style={styles.sheetTitle}>入力方法を選ぶ</Text>
-                <Text style={styles.sheetSubcopy}>LINEやDMの内容を取り込む方法を選びます。</Text>
-              </View>
-              <Pressable style={styles.sheetCloseButton} onPress={() => setToolMenuOpen(false)}>
-                <Text style={styles.sheetCloseText}>閉じる</Text>
-              </Pressable>
-            </View>
-            <Pressable style={styles.personSelectCard} onPress={() => Alert.alert('ファイル添付', '初期UIでは見た目だけです。')}>
-              <Text style={styles.personSelectName}>ファイル添付</Text>
-              <Text style={styles.personSelectMeta}>PDFや資料を文面チェックに使う想定です。</Text>
-            </Pressable>
-            <Pressable style={styles.personSelectCard} onPress={() => Alert.alert('画像添付', '初期UIでは見た目だけです。')}>
-              <Text style={styles.personSelectName}>画像添付</Text>
-              <Text style={styles.personSelectMeta}>LINEスクショやDMスクショを読み取る想定です。</Text>
-            </Pressable>
-            <Pressable style={styles.personSelectCard} onPress={() => Alert.alert('音声入力', '初期UIでは見た目だけです。')}>
-              <Text style={styles.personSelectName}>音声入力</Text>
-              <Text style={styles.personSelectMeta}>移動中のメモを音声で入れる想定です。</Text>
-            </Pressable>
-            <Pressable
-              style={styles.personSelectCard}
-              onPress={async () => {
-                const clipboardText = await Clipboard.getStringAsync();
-                setMessageText((current) => [current, clipboardText].filter(Boolean).join('\n'));
-                resetResult();
-                setToolMenuOpen(false);
-              }}
-            >
-              <Text style={styles.personSelectName}>クリップボードから貼り付け</Text>
-              <Text style={styles.personSelectMeta}>コピー済みのLINE文を入力欄へ追加します。</Text>
-            </Pressable>
-            <Pressable
-              style={styles.personSelectCard}
-              onPress={() => {
-                setMessageText('');
-                resetResult();
-                setToolMenuOpen(false);
-              }}
-            >
-              <Text style={styles.personSelectName}>入力をクリア</Text>
-              <Text style={styles.personSelectMeta}>貼り付けた文面を消します。</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
 
       <Section title="参照している人脈情報" subtitle="文面だけで判断せず、人脈カードの情報と合わせてナビを出します。">
         <View style={styles.referenceSummaryCard}>
@@ -1574,12 +1467,9 @@ function LegacyLineCheckPane({
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Section title="LINEチェック" subtitle="送信前チェックと、相手の返信から人脈カードへ情報を吸収します。">
         <Text style={styles.inputLabel}>LINE文・相手の発言</Text>
-        <TextInput
+        <AttachmentTextInput
           placeholder="送る文、相手から来た文、スクショ内容、音声入力メモなど"
-          placeholderTextColor="#94A3B8"
-          multiline
-          textAlignVertical="top"
-          style={styles.largeInput}
+          minHeight={132}
         />
       </Section>
       <Section title="チェック結果">
@@ -1659,14 +1549,12 @@ function MemoField({
   return (
     <View style={styles.memoField}>
       <Text style={styles.inputLabel}>{label}</Text>
-      <TextInput
+      <AttachmentTextInput
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor="#94A3B8"
-        multiline
-        textAlignVertical="top"
-        style={large ? styles.largeInput : styles.compactInput}
+        minHeight={large ? 132 : 76}
+        compact={!large}
       />
     </View>
   );
@@ -2227,42 +2115,6 @@ const styles = StyleSheet.create({
   emptyButton: { alignItems: 'center', backgroundColor: '#153E75', borderRadius: 8, justifyContent: 'center', marginTop: 14, minHeight: 46 },
   emptyButtonText: { color: '#FFFFFF', fontWeight: '900' },
   inputLabel: { color: '#64748B', fontSize: 12, fontWeight: '900', marginBottom: 6 },
-  compactInput: {
-    minHeight: 76,
-    backgroundColor: '#F8FAFC',
-    borderColor: '#D7DEE8',
-    borderRadius: 8,
-    borderWidth: 1,
-    color: '#0F172A',
-    lineHeight: 20,
-    padding: 10,
-  },
-  largeInput: {
-    minHeight: 132,
-    backgroundColor: '#F8FAFC',
-    borderColor: '#D7DEE8',
-    borderRadius: 8,
-    borderWidth: 1,
-    color: '#0F172A',
-    lineHeight: 22,
-    padding: 12,
-  },
-  messageToolRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 10,
-  },
-  messageToolButton: {
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderColor: '#CBD5E1',
-    borderRadius: 999,
-    borderWidth: 1,
-    height: 42,
-    justifyContent: 'center',
-    width: 42,
-  },
   questionBlock: { marginBottom: 12 },
   questionText: { color: '#153E75', fontWeight: '900', lineHeight: 20, marginBottom: 6 },
   memoField: { marginBottom: 12 },

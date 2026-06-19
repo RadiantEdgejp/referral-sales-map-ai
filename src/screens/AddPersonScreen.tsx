@@ -7,11 +7,11 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { Brain, Save, WandSparkles } from 'lucide-react-native';
 import AnalysisPreview from '../components/AnalysisPreview';
+import AttachmentTextInput from '../components/AttachmentTextInput';
 import { createMockAnalysis } from '../data/mockAnalysis';
 import { SAMPLE_PERSON_MEMO } from '../data/sampleInput';
 import { addPerson } from '../storage/personStorage';
@@ -64,14 +64,12 @@ export default function AddPersonScreen({ navigation }: ScreenProps<'AddPerson'>
         <Text style={styles.subcopy}>覚えていることを雑に書くだけでOK</Text>
 
         <Text style={styles.label}>雑メモ</Text>
-        <TextInput
+        <AttachmentTextInput
           value={memo}
           onChangeText={setMemo}
           placeholder="例：田中さん。美容サロン経営。採用に困ってる..."
-          placeholderTextColor="#94A3B8"
-          multiline
-          textAlignVertical="top"
-          style={styles.memoInput}
+          minHeight={150}
+          backgroundColor="#FFFFFF"
         />
 
         <View style={styles.buttonRow}>
@@ -127,17 +125,6 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontWeight: '900',
     marginBottom: 8,
-  },
-  memoInput: {
-    minHeight: 150,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D7DEE8',
-    borderRadius: 8,
-    padding: 14,
-    color: '#0F172A',
-    fontSize: 15,
-    lineHeight: 22,
   },
   buttonRow: {
     flexDirection: 'row',
