@@ -220,7 +220,15 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             onOpenCoach={(initialPrompt) => navigation.navigate('CoachChat', { initialPrompt })}
           />
         ) : activeTab === 'after' ? (
-          <AfterMemoPane personId={actions[0]?.personId} onLine={() => setActiveTab('line')} onEnd={() => setActiveTab('end')} onOpenPerson={openPerson} />
+          <AfterMemoPane
+            people={people}
+            personId={actions[0]?.personId}
+            onPeopleUpdated={setPeople}
+            onLine={() => setActiveTab('line')}
+            onEnd={() => setActiveTab('end')}
+            onOpenPerson={openPerson}
+            onCoach={(initialPrompt) => navigation.navigate('CoachChat', { initialPrompt })}
+          />
         ) : activeTab === 'line' ? (
           <LineCheckPane personId={actions[0]?.personId} onAfter={() => setActiveTab('after')} onOpenPerson={openPerson} />
         ) : (
@@ -819,6 +827,216 @@ function PreMeetingPane({
 }
 
 function AfterMemoPane({
+  people,
+  personId,
+  onPeopleUpdated,
+  onLine,
+  onEnd,
+  onOpenPerson,
+  onCoach,
+}: {
+  people: Person[];
+  personId?: string;
+  onPeopleUpdated: (people: Person[]) => void;
+  onLine: () => void;
+  onEnd: () => void;
+  onOpenPerson: (personId?: string) => void;
+  onCoach: (initialPrompt: string) => void;
+}) {
+  const person = useMemo(() => people.find((item) => item.id === personId) ?? people[0], [people, personId]);
+  const questions = useMemo(() => createAfterMemoQuestions(person), [person]);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [talkMemo, setTalkMemo] = useState('');
+  const [pain, setPain] = useState('');
+  const [temperature, setTemperature] = useState('中');
+  const [introduceable, setIntroduceable] = useState('');
+  const [wantIntro, setWantIntro] = useState('');
+  const [nextTodo, setNextTodo] = useState('');
+  const [concern, setConcern] = useState('');
+  const [nextTiming, setNextTiming] = useState('3日後 9:00');
+  const [aiGenerated, setAiGenerated] = useState(false);
+  const [showAiDetails, setShowAiDetails] = useState(false);
+  const [updatedNotice, setUpdatedNotice] = useState(false);
+
+  const suggestion = useMemo(
+    () =>
+      createAfterMemoSuggestion({
+        person,
+        pain,
+        temperature,
+        introduceable,
+        wantIntro,
+        nextTodo,
+        nextTiming,
+      }),
+    [introduceable, nextTiming, nextTodo, pain, person, temperature, wantIntro],
+  );
+
+  const setAnswer = (question: string, value: string) => {
+    setAnswers((current) => ({ ...current, [question]: value }));
+  };
+
+  const updatePersonCard = async () => {
+    if (!person) {
+      Alert.alert('人脈カードがありません', '更新対象の人物を選んでください。');
+      return;
+    }
+
+    const answeredQuestions = questions
+      .map((question) => `${question}\n回答：${answers[question] || '未入力'}`)
+      .join('\n\n');
+    const memoLines = [
+      `予定前ナビの質問回答\n${answeredQuestions}`,
+      `話した内容：${talkMemo || '未入力'}`,
+      `相手の悩み：${pain || '未入力'}`,
+      `温度感：${temperature}`,
+      `紹介できそうな人：${introduceable || '未入力'}`,
+      `紹介してほしい人：${wantIntro || '未入力'}`,
+      `違和感・断り理由：${concern || '未入力'}`,
+      `次回タイミング：${nextTiming}`,
+    ];
+
+    const updatedPeople = people.map((item) =>
+      item.id === person.id
+        ? {
+            ...item,
+            goal: suggestion.goal,
+            nextAction: suggestion.nextAction,
+            nextQuestion: suggestion.nextQuestion,
+            lineMessage: suggestion.lineMessage,
+            additionalMemo: [item.additionalMemo, memoLines.join('\n')].filter(Boolean).join('\n\n'),
+          }
+        : item,
+    );
+
+    await savePeople(updatedPeople);
+    onPeopleUpdated(updatedPeople);
+    setUpdatedNotice(true);
+    Alert.alert('人脈カードを更新しました', '後メモの内容を人脈カードに蓄積しました。');
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <View style={styles.paneHeaderRow}>
+        <View style={styles.paneHeaderText}>
+          <Text style={styles.paneTitle}>後メモ</Text>
+          <Text style={styles.paneSubcopy}>会話の回答を営業データにして、人脈カードを更新する</Text>
+        </View>
+        <View style={styles.paneHeaderActions}>
+          <Pressable style={styles.smallOutlineButton} onPress={() => onOpenPerson(person?.id)}>
+            <Text style={styles.smallOutlineText}>人脈</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <Section title="予定前ナビから引き継ぎ" subtitle="予定前で決めた質問に、会話後すぐ回答を入れます。">
+        <View style={styles.afterContextCard}>
+          <Text style={styles.afterContextTitle}>{person?.name ?? '人物未選択'}</Text>
+          <Text style={styles.afterContextMeta}>{person ? `${person.industry} / ${person.relationship}` : '人脈カード未選択'}</Text>
+          <Text style={styles.afterContextFocus}>今日の目的：{person?.goal ?? '課題確認と次アクション設定'}</Text>
+        </View>
+      </Section>
+
+      <Section title="質問への回答">
+        {questions.map((question) => (
+          <View key={question} style={styles.questionBlock}>
+            <Text style={styles.questionText}>{question}</Text>
+            <TextInput
+              value={answers[question] ?? ''}
+              onChangeText={(value) => setAnswer(question, value)}
+              placeholder="相手の回答をそのまま入力"
+              placeholderTextColor="#94A3B8"
+              multiline
+              textAlignVertical="top"
+              style={styles.compactInput}
+            />
+          </View>
+        ))}
+      </Section>
+
+      <Section title="営業データとして記録">
+        <MemoField label="話した内容" value={talkMemo} onChangeText={setTalkMemo} placeholder="会話全体の要点を雑に入力" />
+        <MemoField label="相手の悩み" value={pain} onChangeText={setPain} placeholder="採用、集客、固定費、人脈など" />
+        <Text style={styles.inputLabel}>温度感</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
+          {['低', '中', '高', '紹介期待あり'].map((item) => (
+            <FilterChip key={item} label={item} selected={temperature === item} onPress={() => setTemperature(item)} />
+          ))}
+        </ScrollView>
+        <MemoField label="紹介できそうな人" value={introduceable} onChangeText={setIntroduceable} placeholder="相手に紹介できそうな人、業種、会社など" />
+        <MemoField label="紹介してほしい人" value={wantIntro} onChangeText={setWantIntro} placeholder="紹介してほしい人の条件や業種" />
+        <MemoField label="次にやるべきこと" value={nextTodo} onChangeText={setNextTodo} placeholder="情報提供、LINE、再面談、紹介依頼延期など" />
+        <MemoField label="違和感・断られた理由" value={concern} onChangeText={setConcern} placeholder="引っかかった点、断り文句、温度感が下がった理由" />
+        <MemoField label="次回連絡タイミング" value={nextTiming} onChangeText={setNextTiming} placeholder="例：3日後 9:00" />
+      </Section>
+
+      <Pressable
+        style={styles.fullPrimaryButton}
+        onPress={() => {
+          setAiGenerated(true);
+          setShowAiDetails(false);
+          setUpdatedNotice(false);
+          Alert.alert('後メモを整理しました', '入力内容から人脈カード更新案を作りました。');
+        }}
+      >
+        <Text style={styles.fullPrimaryText}>AIで整理する</Text>
+      </Pressable>
+
+      {aiGenerated ? (
+        <Section title="AIの人脈カード更新案" subtitle="分類・ゴール・次アクションを、人脈カードへ戻すための案です。">
+          <View style={styles.navSummaryCard}>
+            <Info label="分類更新案" value={suggestion.categoryUpdate} compact />
+            <Info label="ゴール更新案" value={suggestion.goal} compact />
+            <Info label="次アクション" value={suggestion.nextAction} compact />
+            <Info label="次回連絡日" value={suggestion.nextContact} compact />
+          </View>
+
+          <Pressable style={styles.toggleRow} onPress={() => setShowAiDetails((value) => !value)}>
+            <Text style={styles.toggleText}>{showAiDetails ? '更新案の詳細を閉じる' : '更新案の詳細を開く'}</Text>
+          </Pressable>
+
+          {showAiDetails ? (
+            <>
+              <Info label="営業フィードバック" value={suggestion.feedback} />
+              <Info label="次回聞くべき質問" value={suggestion.nextQuestion} />
+              <Info label="LINE文案" value={suggestion.lineMessage} />
+              <Info label="蓄積する情報" value={suggestion.accumulation} />
+            </>
+          ) : null}
+
+          <View style={styles.primaryActionStack}>
+            <Pressable style={styles.primaryCtaWide} onPress={updatePersonCard}>
+              <Text style={styles.primaryCtaText}>人脈カードを更新</Text>
+            </Pressable>
+            <View style={styles.inlineActions}>
+              <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('次回通知を設定しました', `${suggestion.nextContact} に通知する想定です。`)}>
+                <Text style={styles.secondaryCtaText}>次回通知</Text>
+              </Pressable>
+              <Pressable style={styles.secondaryCta} onPress={onLine}>
+                <Text style={styles.secondaryCtaText}>LINE文</Text>
+              </Pressable>
+            </View>
+            <View style={styles.inlineActions}>
+              <Pressable style={styles.secondaryCta} onPress={() => onCoach(`${person?.name ?? 'この人'}との会話後メモから、人脈カード更新と次アクションを相談したいです。`)}>
+                <Text style={styles.secondaryCtaText}>コーチ相談</Text>
+              </Pressable>
+              <Pressable style={styles.secondaryCta} onPress={onEnd}>
+                <Text style={styles.secondaryCtaText}>今日の処理完了</Text>
+              </Pressable>
+            </View>
+          </View>
+          {updatedNotice ? <Text style={styles.successNotice}>人脈カードへ蓄積しました</Text> : null}
+        </Section>
+      ) : (
+        <Section title="AIの人脈カード更新案">
+          <Text style={styles.emptyText}>回答と会話データを入力して、「AIで整理する」を押してください。</Text>
+        </Section>
+      )}
+    </ScrollView>
+  );
+}
+
+function LegacyAfterMemoPane({
   personId,
   onLine,
   onEnd,
@@ -947,6 +1165,33 @@ function Info({ label, value, compact }: { label: string; value: string; compact
   );
 }
 
+function MemoField({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <View style={styles.memoField}>
+      <Text style={styles.inputLabel}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor="#94A3B8"
+        multiline
+        textAlignVertical="top"
+        style={styles.compactInput}
+      />
+    </View>
+  );
+}
+
 function Schedule({ time, title, purpose }: { time: string; title: string; purpose: string }) {
   return (
     <View style={styles.scheduleRow}>
@@ -1056,6 +1301,63 @@ function createPreMeetingNavigation(person: Person | undefined, actionType: stri
       '紹介依頼は相手の信用を使う行為なので、信頼形成前に頼むと負担が大きい',
     ],
     coachPrompt: `${name}との${actionType}です。今日の目的は、${industry}の課題を聞いて、${categories}として進められるか判断することです。今日の質問や進め方が適切か確認してください。`,
+  };
+}
+
+function createAfterMemoQuestions(person?: Person) {
+  const industry = person?.industry ?? '相手の業界';
+
+  return [
+    `最近、${industry}では集客・採用・固定費のどこが一番重いですか？`,
+    '周りの経営者さんも、同じような悩みを持っていますか？',
+    '今後どんな人と繋がれると助かりそうですか？',
+  ];
+}
+
+function createAfterMemoSuggestion({
+  person,
+  pain,
+  temperature,
+  introduceable,
+  wantIntro,
+  nextTodo,
+  nextTiming,
+}: {
+  person?: Person;
+  pain: string;
+  temperature: string;
+  introduceable: string;
+  wantIntro: string;
+  nextTodo: string;
+  nextTiming: string;
+}) {
+  const name = person?.name ?? 'この人';
+  const categoryUpdate =
+    temperature === '高' || temperature === '紹介期待あり'
+      ? '紹介元候補 / 情報源候補を強める。顧客候補は会話内容を見て保留。'
+      : '情報源候補を維持。紹介依頼は急がず、関係構築を優先。';
+  const goal = introduceable || wantIntro
+    ? '相互紹介の可能性を見ながら、情報交換を継続する。'
+    : `${person?.industry ?? '相手業界'}の課題理解を深め、次回連絡で関係を温める。`;
+  const nextAction = nextTodo || `${nextTiming}に、会話で出た課題に関する情報を1つ送る。`;
+  const nextQuestion = pain
+    ? `${pain}について、周りでも同じ悩みが出ているか確認する。`
+    : '周りの経営者にも同じ悩みがあるか確認する。';
+
+  return {
+    categoryUpdate,
+    goal,
+    nextAction,
+    nextContact: nextTiming,
+    feedback: `${name}との会話は、売り込みよりも課題確認を優先する段階です。温度感は「${temperature}」として扱い、次回までに小さな価値提供を挟むのが安全です。`,
+    nextQuestion,
+    lineMessage: `${name}さん、今日はありがとうございました。お話に出ていた${pain || '課題'}の件、こちらでも少し参考になりそうな情報を探してみます。また共有します。`,
+    accumulation: [
+      pain ? `相手の悩み：${pain}` : '相手の悩み：未入力',
+      introduceable ? `紹介できそうな人：${introduceable}` : '紹介できそうな人：未入力',
+      wantIntro ? `紹介してほしい人：${wantIntro}` : '紹介してほしい人：未入力',
+      `次回連絡：${nextTiming}`,
+    ].join('\n'),
   };
 }
 
@@ -1279,6 +1581,17 @@ const styles = StyleSheet.create({
   },
   questionBlock: { marginBottom: 12 },
   questionText: { color: '#153E75', fontWeight: '900', lineHeight: 20, marginBottom: 6 },
+  memoField: { marginBottom: 12 },
+  afterContextCard: {
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12,
+  },
+  afterContextTitle: { color: '#0F172A', fontSize: 17, fontWeight: '900' },
+  afterContextMeta: { color: '#475569', fontWeight: '800', marginTop: 4 },
+  afterContextFocus: { color: '#153E75', fontWeight: '900', lineHeight: 20, marginTop: 7 },
   inlineActions: { flexDirection: 'row', gap: 10, marginBottom: 10 },
   primaryCta: {
     alignItems: 'center',
