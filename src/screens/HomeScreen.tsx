@@ -231,7 +231,14 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             onCoach={(initialPrompt) => navigation.navigate('CoachChat', { initialPrompt })}
           />
         ) : activeTab === 'line' ? (
-          <LineCheckPane personId={actions[0]?.personId} onAfter={() => setActiveTab('after')} onOpenPerson={openPerson} />
+          <LineCheckPane
+            people={people}
+            personId={actions[0]?.personId}
+            onPeopleUpdated={setPeople}
+            onAfter={() => setActiveTab('after')}
+            onOpenPerson={openPerson}
+            onCoach={(initialPrompt) => navigation.navigate('CoachChat', { initialPrompt })}
+          />
         ) : (
           <EndOfDayPane onAfter={() => setActiveTab('after')} onHome={() => setActiveTab('home')} />
         )}
@@ -247,7 +254,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           ))}
         </View>
 
-        {activeTab !== 'pre' ? (
+        {activeTab !== 'pre' && activeTab !== 'after' && activeTab !== 'line' ? (
           <View style={styles.floatingActions}>
             <Pressable
               style={[styles.floatingButton, styles.coachButton]}
@@ -1076,7 +1083,424 @@ function LegacyAfterMemoPane({
   );
 }
 
+const LINE_CHECK_TYPES = ['送信前チェック', '受信文チェック', '返信作成', 'スクショメモ', '音声メモ', '断り返信', '紹介依頼文', 'お礼文'] as const;
+const LINE_PERSON_FILTERS = ['今日予定', '最近やり取り', '次アクションあり', '返信待ち', '最近追加', '全員'] as const;
+const LINE_NOTICE_OPTIONS = ['明日 9:00', '3日後 9:00', '1週間後 9:00', '返信がなければ3日後', '通知なし'];
+
+type LineCheckType = (typeof LINE_CHECK_TYPES)[number];
+type LinePersonFilter = (typeof LINE_PERSON_FILTERS)[number];
+
 function LineCheckPane({
+  people,
+  personId,
+  onPeopleUpdated,
+  onAfter,
+  onOpenPerson,
+  onCoach,
+}: {
+  people: Person[];
+  personId?: string;
+  onPeopleUpdated: (people: Person[]) => void;
+  onAfter: () => void;
+  onOpenPerson: (personId?: string) => void;
+  onCoach: (initialPrompt: string) => void;
+}) {
+  const [selectedPersonId, setSelectedPersonId] = useState(personId);
+  const [personPickerOpen, setPersonPickerOpen] = useState(false);
+  const [personQuery, setPersonQuery] = useState('');
+  const [personFilter, setPersonFilter] = useState<LinePersonFilter>('最近やり取り');
+  const [checkType, setCheckType] = useState<LineCheckType>('受信文チェック');
+  const [messageText, setMessageText] = useState('');
+  const [hasChecked, setHasChecked] = useState(false);
+  const [copyNotice, setCopyNotice] = useState('');
+  const [savedNotice, setSavedNotice] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+
+  const candidates = useMemo(() => dedupePeople(people), [people]);
+  const currentPersonId = selectedPersonId ?? personId ?? candidates[0]?.id;
+  const selectedPerson = useMemo(
+    () => candidates.find((person) => person.id === currentPersonId) ?? candidates[0],
+    [candidates, currentPersonId],
+  );
+  const filteredCandidates = useMemo(() => {
+    const normalized = personQuery.trim().toLowerCase();
+
+    return candidates.filter((person) => {
+      const matchesQuery =
+        !normalized ||
+        [person.name, person.industry, person.relationship, person.rawMemo, person.nextAction, person.cautions]
+          .join(' ')
+          .toLowerCase()
+          .includes(normalized);
+      const matchesFilter = matchesLinePersonFilter(person, personFilter);
+
+      return matchesQuery && matchesFilter;
+    });
+  }, [candidates, personFilter, personQuery]);
+
+  const typeGuide = getLineCheckTypeGuide(checkType);
+  const analysis = useMemo(() => createLineCheckAnalysis(selectedPerson, checkType, messageText), [checkType, messageText, selectedPerson]);
+
+  const resetResult = () => {
+    setHasChecked(false);
+    setCopyNotice('');
+    setSavedNotice(false);
+  };
+
+  const fillSample = () => {
+    setMessageText('相手から「最近はリピート率が課題ですね。新規は来るけど続かないです」と返信が来た。');
+    resetResult();
+  };
+
+  const checkMessage = () => {
+    if (!selectedPerson) {
+      Alert.alert('相手を選んでください', '文面を確認する相手を先に選んでください。');
+      return;
+    }
+    if (!messageText.trim()) {
+      Alert.alert('文面を入力してください', '送る前の文、相手から来た返信、スクショメモ、音声メモなどを入力してください。');
+      return;
+    }
+    setHasChecked(true);
+    setSavedNotice(false);
+    setCopyNotice('');
+  };
+
+  const copyReply = async () => {
+    await Clipboard.setStringAsync(analysis.replyDraft);
+    setCopyNotice('返信文をコピーしました');
+  };
+
+  const saveToPersonCard = async () => {
+    if (!selectedPerson) return;
+
+    const memo = [
+      `文面確認（${checkType}）`,
+      `入力文：${messageText || '未入力'}`,
+      `温度感：${analysis.temperature.label} / ${analysis.temperature.reason}`,
+      `抽出情報：${analysis.extracted.map((item) => `${item.label}：${item.value}`).join('、')}`,
+      `返信方針：${analysis.judgement}`,
+      `返信文案：${analysis.replyDraft}`,
+      `分類更新案：${analysis.categoryUpdate}`,
+      `次アクション：${analysis.nextAction}`,
+      `注意点：${analysis.caution}`,
+    ].join('\n');
+
+    const updatedPeople = people.map((person) =>
+      person.id === selectedPerson.id
+        ? {
+            ...person,
+            nextAction: analysis.nextAction,
+            nextQuestion: analysis.nextQuestion,
+            lineMessage: analysis.replyDraft,
+            cautions: analysis.caution,
+            additionalMemo: [person.additionalMemo, memo].filter(Boolean).join('\n\n'),
+          }
+        : person,
+    );
+
+    await savePeople(updatedPeople);
+    onPeopleUpdated(updatedPeople);
+    setSavedNotice(true);
+    Alert.alert('人脈カードに保存しました', 'LINE・DMの内容から抽出した営業データを人脈カードに蓄積しました。');
+  };
+
+  const sendToAfterMemo = () => {
+    Alert.alert('後メモに送ります', '相手・入力文・抽出情報・温度感・次の質問・返信文案・次アクションを後メモに引き継ぐ想定です。');
+    onAfter();
+  };
+
+  if (people.length === 0) {
+    return (
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Section title="文面確認" subtitle="送る前に確認し、相手の返信を営業データに変える">
+          <View style={styles.empty}>
+            <Text style={styles.emptyTitle}>まだ相手がいません。</Text>
+            <Text style={styles.emptyText}>先に人脈カードを追加すると、LINEやDMの内容を相手ごとに蓄積できます。</Text>
+          </View>
+        </Section>
+      </ScrollView>
+    );
+  }
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <View style={styles.paneHeaderRow}>
+        <View style={styles.paneHeaderText}>
+          <Text style={styles.paneTitle}>文面確認</Text>
+          <Text style={styles.paneSubcopy}>送る前に確認し、相手の返信を営業データに変える</Text>
+        </View>
+        <View style={styles.paneHeaderActions}>
+          <Pressable style={styles.smallOutlineButton} onPress={() => onOpenPerson(selectedPerson?.id)}>
+            <Text style={styles.smallOutlineText}>人脈</Text>
+          </Pressable>
+          <Pressable style={styles.smallOutlineButton} onPress={() => Alert.alert('履歴', '過去の文面チェック履歴を開く想定です。')}>
+            <Text style={styles.smallOutlineText}>履歴</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <Section title="相手を選ぶ" subtitle="ホーム・人脈カード・後メモから開いた場合は、この相手が自動選択される想定です。">
+        {selectedPerson ? (
+          <View style={styles.selectedPersonSummary}>
+            <Text style={styles.selectedSummaryLabel}>選択中</Text>
+            <Text style={styles.selectedSummaryName}>{selectedPerson.name}</Text>
+            <Text style={styles.selectedSummaryMeta}>
+              {selectedPerson.industry} / {selectedPerson.categories.join(' / ')}
+            </Text>
+            <Text style={styles.selectedSummaryAction}>次アクション：{selectedPerson.nextAction}</Text>
+          </View>
+        ) : null}
+        <Pressable style={styles.changePersonButton} onPress={() => setPersonPickerOpen(true)}>
+          <Search color="#0F172A" size={18} />
+          <Text style={styles.changePersonText}>相手を検索・変更する</Text>
+        </Pressable>
+      </Section>
+
+      <Modal visible={personPickerOpen} transparent animationType="slide" onRequestClose={() => setPersonPickerOpen(false)}>
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.personPickerSheet}>
+            <View style={styles.sheetHeader}>
+              <View>
+                <Text style={styles.sheetTitle}>相手を検索</Text>
+                <Text style={styles.sheetSubcopy}>名前・業種・メモで検索できます。</Text>
+              </View>
+              <Pressable style={styles.sheetCloseButton} onPress={() => setPersonPickerOpen(false)}>
+                <Text style={styles.sheetCloseText}>閉じる</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.searchBox}>
+              <Search color="#64748B" size={18} />
+              <TextInput
+                value={personQuery}
+                onChangeText={setPersonQuery}
+                placeholder="名前・業種・メモで検索"
+                placeholderTextColor="#94A3B8"
+                style={styles.searchInput}
+              />
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
+              {LINE_PERSON_FILTERS.map((item) => (
+                <FilterChip key={item} label={item} selected={personFilter === item} onPress={() => setPersonFilter(item)} />
+              ))}
+            </ScrollView>
+
+            <Text style={styles.resultHint}>候補 {filteredCandidates.length}件</Text>
+            <ScrollView style={styles.personPickerList} showsVerticalScrollIndicator={false}>
+              {filteredCandidates.map((person) => {
+                const selected = person.id === selectedPerson?.id;
+                return (
+                  <Pressable
+                    key={person.id}
+                    style={[styles.personSelectCard, selected && styles.personSelectCardActive]}
+                    onPress={() => {
+                      setSelectedPersonId(person.id);
+                      resetResult();
+                      setPersonPickerOpen(false);
+                    }}
+                  >
+                    <View style={styles.personSelectTop}>
+                      <Text style={styles.personSelectName}>{person.name}</Text>
+                      {selected ? <Text style={styles.selectedMark}>選択中</Text> : null}
+                    </View>
+                    <Text style={styles.personSelectMeta}>
+                      {person.industry}｜{getLinePersonStatus(person)}｜{person.categories[0]}
+                    </Text>
+                    <Text style={styles.personSelectAction}>次アクション：{person.nextAction}</Text>
+                  </Pressable>
+                );
+              })}
+              {filteredCandidates.length === 0 ? (
+                <View style={styles.emptyPickerState}>
+                  <Text style={styles.emptyTitle}>候補が見つかりません。</Text>
+                  <Text style={styles.emptyText}>名前、業種、メモ本文、次アクションの一部で検索してみてください。</Text>
+                </View>
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Section title="チェック種別">
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
+          {LINE_CHECK_TYPES.map((item) => (
+            <FilterChip
+              key={item}
+              label={item}
+              selected={checkType === item}
+              onPress={() => {
+                setCheckType(item);
+                resetResult();
+              }}
+            />
+          ))}
+        </ScrollView>
+        <Text style={styles.guidanceText}>{typeGuide}</Text>
+      </Section>
+
+      <Section title="文面・メモを入力" subtitle="送る文、届いた文、スクショメモ、音声メモの文字起こしをここに入れます。">
+        <TextInput
+          value={messageText}
+          onChangeText={(value) => {
+            setMessageText(value);
+            resetResult();
+          }}
+          placeholder="例：相手から「最近はリピート率が課題ですね。新規は来るけど続かないです」と返信が来た。"
+          placeholderTextColor="#94A3B8"
+          multiline
+          textAlignVertical="top"
+          style={styles.largeInput}
+        />
+        <View style={styles.inlineActions}>
+          <Pressable style={styles.secondaryCta} onPress={fillSample}>
+            <Text style={styles.secondaryCtaText}>サンプル</Text>
+          </Pressable>
+          <Pressable
+            style={styles.secondaryCta}
+            onPress={() => {
+              setMessageText('');
+              resetResult();
+            }}
+          >
+            <Text style={styles.secondaryCtaText}>クリア</Text>
+          </Pressable>
+        </View>
+        <View style={styles.inlineActions}>
+          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('スクショから入力', '初期UIでは見た目だけです。後でOCR連携を追加します。')}>
+            <Text style={styles.secondaryCtaText}>スクショから入力</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('音声入力', '初期UIでは見た目だけです。後で音声入力を追加します。')}>
+            <Text style={styles.secondaryCtaText}>音声入力</Text>
+          </Pressable>
+        </View>
+      </Section>
+
+      <Section title="参照している人脈情報" subtitle="文面だけで判断せず、人脈カードの情報と合わせてナビを出します。">
+        <View style={styles.referenceSummaryCard}>
+          <Text style={styles.referenceSummaryTitle}>
+            {selectedPerson?.name}｜{selectedPerson?.industry}
+          </Text>
+          <Text style={styles.referenceSummaryText}>分類：{selectedPerson?.categories.join(' / ')}</Text>
+          <Text style={styles.referenceSummaryText}>現在のゴール：{selectedPerson?.goal}</Text>
+          <Text style={styles.referenceSummaryText}>次アクション：{selectedPerson?.nextAction}</Text>
+          <Text style={styles.referenceSummaryCaution}>注意点：{selectedPerson?.cautions}</Text>
+        </View>
+        <View style={styles.inlineActions}>
+          <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(selectedPerson?.id)}>
+            <Text style={styles.secondaryCtaText}>人脈カードを見る</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryCta} onPress={onAfter}>
+            <Text style={styles.secondaryCtaText}>後メモを見る</Text>
+          </Pressable>
+        </View>
+      </Section>
+
+      <Pressable style={styles.fullPrimaryButton} onPress={checkMessage}>
+        <Text style={styles.fullPrimaryText}>文面をチェックする</Text>
+      </Pressable>
+
+      {hasChecked ? (
+        <>
+          <Section title="分析結果" subtitle={`${selectedPerson?.name ?? '相手未選択'} / ${checkType}`}>
+            <LineResultCard title="判定" body={analysis.judgement} />
+            <LineResultCard title="相手の温度感" body={`${analysis.temperature.label}\n理由：${analysis.temperature.reason}`} />
+            <LineResultCard title="抽出された情報" body={analysis.extracted.map((item) => `・${item.label}：${item.value}`).join('\n')} />
+            <LineResultCard title="次に聞くべき質問" body={`${analysis.nextQuestion}\n\n質問の目的：${analysis.questionPurpose}`} />
+            <LineResultCard title="返信文案" body={analysis.replyDraft} />
+            <LineResultCard title="人脈カード更新案" body={analysis.cardUpdate} />
+            <LineResultCard title="次アクション" body={`${analysis.nextAction}\n次回連絡日：${analysis.nextContact}`} />
+            <LineResultCard title="注意点" body={analysis.caution} />
+            <LineResultCard title="営業フィードバック" body={`良い点：${analysis.feedbackGood}\n改善点：${analysis.feedbackImprove}`} />
+          </Section>
+
+          <Section title="保存・連携" subtitle="分析した内容を人脈カード、後メモ、通知、営業コーチに流します。">
+            <View style={styles.primaryActionStack}>
+              <Pressable style={styles.primaryCtaWide} onPress={saveToPersonCard}>
+                <Text style={styles.primaryCtaText}>人脈カードに保存</Text>
+              </Pressable>
+              <View style={styles.inlineActions}>
+                <Pressable style={styles.secondaryCta} onPress={sendToAfterMemo}>
+                  <Text style={styles.secondaryCtaText}>後メモに送る</Text>
+                </Pressable>
+                <Pressable style={styles.secondaryCta} onPress={() => setNotificationOpen(true)}>
+                  <Text style={styles.secondaryCtaText}>次回通知</Text>
+                </Pressable>
+              </View>
+              <View style={styles.inlineActions}>
+                <Pressable style={styles.secondaryCta} onPress={copyReply}>
+                  <Text style={styles.secondaryCtaText}>返信文をコピー</Text>
+                </Pressable>
+                <Pressable style={styles.secondaryCta} onPress={() => onCoach(analysis.coachPrompt)}>
+                  <Text style={styles.secondaryCtaText}>コーチに相談</Text>
+                </Pressable>
+              </View>
+            </View>
+            {savedNotice ? <Text style={styles.successNotice}>人脈カードに保存しました</Text> : null}
+            {copyNotice ? <Text style={styles.successNotice}>{copyNotice}</Text> : null}
+          </Section>
+        </>
+      ) : (
+        <Section title="分析結果">
+          <Text style={styles.emptyText}>まだ文面が入力されていません。送る前の文、相手から来た返信、スクショメモ、音声メモを入れてください。</Text>
+        </Section>
+      )}
+
+      <Section title="文面チェック履歴">
+        <Route title="6月19日 / 山本さん / 受信文チェック" meta="要約：リピート率が課題という返信 / 状態：人脈カード保存済み / 次アクション：周辺経営者にも同じ課題があるか聞く" />
+        <Route title="6月18日 / 田中さん / 紹介依頼文" meta="要約：美容業界の経営者を紹介してほしい相談 / 状態：未保存 / 次アクション：紹介依頼は延期して情報交換を優先" />
+        <View style={styles.inlineActions}>
+          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('履歴詳細', '文面チェック履歴の詳細を開く想定です。')}>
+            <Text style={styles.secondaryCtaText}>詳細を見る</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(selectedPerson?.id)}>
+            <Text style={styles.secondaryCtaText}>人脈カードを見る</Text>
+          </Pressable>
+        </View>
+      </Section>
+
+      <Modal visible={notificationOpen} transparent animationType="fade" onRequestClose={() => setNotificationOpen(false)}>
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.personPickerSheet}>
+            <View style={styles.sheetHeader}>
+              <View>
+                <Text style={styles.sheetTitle}>次回通知を設定</Text>
+                <Text style={styles.sheetSubcopy}>返信待ちや追客漏れを防ぐための通知です。</Text>
+              </View>
+              <Pressable style={styles.sheetCloseButton} onPress={() => setNotificationOpen(false)}>
+                <Text style={styles.sheetCloseText}>閉じる</Text>
+              </Pressable>
+            </View>
+            {LINE_NOTICE_OPTIONS.map((option) => (
+              <Pressable
+                key={option}
+                style={styles.personSelectCard}
+                onPress={() => {
+                  setNotificationOpen(false);
+                  Alert.alert('通知を設定しました', `${option} に通知する想定です。`);
+                }}
+              >
+                <Text style={styles.personSelectName}>{option}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </Modal>
+    </ScrollView>
+  );
+}
+
+function LineResultCard({ title, body }: { title: string; body: string }) {
+  return (
+    <View style={styles.navSummaryCard}>
+      <Text style={styles.referenceSummaryTitle}>{title}</Text>
+      <Text style={styles.referenceSummaryText}>{body}</Text>
+    </View>
+  );
+}
+
+function LegacyLineCheckPane({
   personId,
   onAfter,
   onOpenPerson,
@@ -1227,6 +1651,167 @@ function dedupePeople(people: Person[]) {
   });
 
   return Array.from(unique.values());
+}
+
+function matchesLinePersonFilter(person: Person, filter: LinePersonFilter) {
+  if (filter === '全員') return true;
+  if (filter === '今日予定') return Boolean(person.nextContactAt) || person.name.includes('佐藤');
+  if (filter === '最近やり取り') return person.name.includes('山本') || person.name.includes('田中') || Boolean(person.additionalMemo);
+  if (filter === '次アクションあり') return Boolean(person.nextAction);
+  if (filter === '返信待ち') return person.name.includes('山本') || person.nextAction.includes('返信');
+  if (filter === '最近追加') {
+    return Date.now() - new Date(person.createdAt).getTime() < 1000 * 60 * 60 * 24 * 14;
+  }
+  return true;
+}
+
+function getLinePersonStatus(person: Person) {
+  if (person.name.includes('山本')) return '返信待ち';
+  if (person.name.includes('田中')) return '情報交換中';
+  if (person.name.includes('佐藤')) return '最近更新';
+  return person.nextAction ? '次アクションあり' : '最近追加';
+}
+
+function getLineCheckTypeGuide(type: LineCheckType) {
+  const guides: Record<LineCheckType, string> = {
+    送信前チェック: '売り込み感、圧の強さ、返信しやすさ、相手メリットを確認します。',
+    受信文チェック: '相手の返信から、課題・温度感・興味・次に聞く質問を抽出します。',
+    返信作成: '相手の文脈と人脈カードを参照して、次につながる返信文を作ります。',
+    スクショメモ: 'スクショから読み取った内容を雑に書いて、人脈カード更新案に変えます。',
+    音声メモ: '移動中の音声メモを営業データに整理する想定です。',
+    断り返信: '断り理由を抽出し、関係を切らさない次アクションを作ります。',
+    紹介依頼文: '紹介依頼してよい段階か、依頼文が重すぎないかを確認します。',
+    お礼文: '会った直後のお礼文から、次回接触と後メモにつながる文面を作ります。',
+  };
+
+  return guides[type];
+}
+
+function createLineCheckAnalysis(person: Person | undefined, checkType: LineCheckType, text: string) {
+  const name = person?.name ?? '相手';
+  const source = text || '相手から「最近はリピート率が課題ですね。新規は来るけど続かないです」と返信が来た。';
+  const issue = inferLineIssue(source);
+  const isRefusal = /断|不要|今は|難しい|また|検討|忙しい/.test(source) || checkType === '断り返信';
+  const hasReferralSignal = /紹介|知人|経営者|周り|つな|繋/.test(source);
+  const hasConcretePain = /課題|困|悩|大変|リピート|採用|集客|広告|固定費|売上/.test(source);
+  const isBeforeSend = checkType === '送信前チェック' || checkType === '紹介依頼文' || checkType === 'お礼文';
+  const temperatureLabel = isRefusal ? '低い〜普通' : hasConcretePain ? '普通〜やや高い' : '普通';
+  const proposalReadiness = hasConcretePain && !isBeforeSend && !isRefusal ? '商品提案はまだ早い。課題の深掘りと情報提供を優先。' : '今は提案より関係維持と確認が安全。';
+  const nextQuestion = createLineNextQuestion(issue, person, hasReferralSignal);
+  const replyDraft = createLineReplyDraft(name, issue, isRefusal, hasReferralSignal);
+  const categoryUpdate = [
+    `顧客候補：${hasConcretePain ? '中' : '低〜中'}`,
+    `将来候補：${isRefusal ? '中' : '高'}`,
+    `情報源候補：${hasReferralSignal ? '高' : '中'}`,
+  ].join('\n');
+  const nextAction = isRefusal
+    ? '断り理由を保存し、1週間後に負担の軽い情報提供で再接触する'
+    : `返信後、${issue.shortLabel}について本人と周辺人脈の両方を深掘りする`;
+
+  return {
+    judgement: isBeforeSend
+      ? '送信前の文面は、相手の状況確認を先に置くと安全です。売り込み感を抑え、返信しやすい一問に絞ってください。'
+      : `この返信は${hasConcretePain ? '前向きな材料があります' : '会話継続の余地があります'}。ただし、今すぐ商品提案ではなく、課題の深掘りと情報提供を優先してください。`,
+    temperature: {
+      label: temperatureLabel,
+      reason: hasConcretePain
+        ? '自分の課題を具体的に話しているため、会話継続の余地があります。ただし商品への興味ではなく、経営課題への関心です。'
+        : isRefusal
+          ? '明確な前進サインは弱いですが、断り理由を保存すれば次回の接点設計に使えます。'
+          : '温度感はまだ判断途中です。次の一問で課題の具体度を確認する必要があります。',
+    },
+    extracted: [
+      { label: '課題', value: issue.label },
+      { label: '状況', value: issue.situation },
+      { label: '興味', value: issue.interest },
+      { label: '断り理由', value: isRefusal ? '今すぐ進める負担、またはタイミングの問題がある可能性' : '現時点では明確な断りなし' },
+      { label: '現時点の提案可否', value: proposalReadiness },
+      { label: '人脈価値', value: hasReferralSignal ? '周辺経営者や知人情報を取れる可能性あり' : '周辺人脈にも同じ課題があるか確認が必要' },
+    ],
+    nextQuestion,
+    questionPurpose: '本人だけでなく、周辺人脈にも同じ課題があるか確認し、紹介元・情報源としての価値を判断する。',
+    replyDraft,
+    cardUpdate: [
+      '追加する情報：',
+      `・課題：${issue.label}`,
+      `・関心：${issue.interest}`,
+      `・温度感：${temperatureLabel}`,
+      `・注意点：${proposalReadiness}`,
+      `・次回の切り口：${issue.shortLabel}と周辺人脈の課題`,
+      '',
+      '分類更新案：',
+      categoryUpdate,
+    ].join('\n'),
+    categoryUpdate,
+    nextAction,
+    nextContact: isRefusal ? '1週間後 9:00' : '返信待ち / 返信がなければ3日後 9:00',
+    caution: isRefusal
+      ? '断られた直後に説得すると負担が増えます。まず理由を保存し、軽い情報提供で接点を残してください。'
+      : 'ここで保険や商品提案に進むと早すぎる可能性があります。まずは相手の課題を深掘りし、情報提供できる関係を作ってください。',
+    feedbackGood: hasConcretePain ? '相手の課題を引き出せています。' : '会話を営業データとして残す流れを作れています。',
+    feedbackImprove: '次は本人の課題だけでなく、周辺人脈にも同じ課題があるか聞くと、紹介元・情報源としての価値を判断しやすくなります。',
+    coachPrompt: `${name}から${issue.shortLabel}に関する返信が来ました。今すぐ提案するのではなく、課題を深掘りして関係を温めたいです。次にどう返信するべきか相談したいです。`,
+  };
+}
+
+function inferLineIssue(text: string) {
+  if (/リピート|継続|再来|続か/.test(text)) {
+    return {
+      label: 'リピート率',
+      shortLabel: 'リピート率',
+      situation: '新規は来るが継続率が低い',
+      interest: '再来店施策、SNS運用、店舗改善',
+    };
+  }
+  if (/採用|スタッフ|人材|定着/.test(text)) {
+    return {
+      label: '採用・スタッフ定着',
+      shortLabel: '採用課題',
+      situation: '人手不足やスタッフ定着に悩んでいる可能性',
+      interest: '採用導線、定着施策、経営者同士の情報交換',
+    };
+  }
+  if (/集客|広告|SNS|新規/.test(text)) {
+    return {
+      label: '集客・広告費',
+      shortLabel: '集客課題',
+      situation: '新規獲得や広告費の効率に課題がある可能性',
+      interest: 'SNS運用、紹介導線、広告費改善',
+    };
+  }
+  if (/固定費|経費|コスト|家賃/.test(text)) {
+    return {
+      label: '固定費・経費',
+      shortLabel: '固定費',
+      situation: '店舗運営コストの見直し余地がある可能性',
+      interest: '固定費削減、経営改善、資金繰り',
+    };
+  }
+  return {
+    label: '経営課題',
+    shortLabel: '経営課題',
+    situation: '課題の具体度はまだ不足',
+    interest: '情報交換、課題整理、周辺人脈の状況確認',
+  };
+}
+
+function createLineNextQuestion(issue: ReturnType<typeof inferLineIssue>, person: Person | undefined, hasReferralSignal: boolean) {
+  if (hasReferralSignal) {
+    return `${person?.industry ?? '同じ業界'}の周りの方も、${issue.shortLabel}で悩んでいる方は多いですか？`;
+  }
+  return `周りの${person?.industry ?? '経営者'}さんも、${issue.shortLabel}で悩んでいる方は多いですか？`;
+}
+
+function createLineReplyDraft(name: string, issue: ReturnType<typeof inferLineIssue>, isRefusal: boolean, hasReferralSignal: boolean) {
+  if (isRefusal) {
+    return `${name}さん、ありがとうございます。今すぐ進める話ではなくて大丈夫です。ちなみに今後の参考までに、今はタイミングの問題なのか、内容自体が少し違う感じなのかだけ軽く教えてもらえますか？`;
+  }
+
+  const relationQuestion = hasReferralSignal
+    ? `ちなみに周りの方も、${issue.shortLabel}で悩んでいる方は多いですか？`
+    : `ちなみに周りの経営者さんも、${issue.shortLabel}で悩んでいる方は多いですか？`;
+
+  return `${name}さん、ありがとうございます。${issue.situation}というのは、かなり大きい課題ですね。${relationQuestion}`;
 }
 
 function getActionGuidance(actionType: string) {
