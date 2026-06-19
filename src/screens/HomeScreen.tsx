@@ -32,6 +32,7 @@ import FilterChip from '../components/FilterChip';
 import PersonCard from '../components/PersonCard';
 import { MOCK_PEOPLE } from '../data/mockPeople';
 import { getPeople, savePeople } from '../storage/personStorage';
+import type { AfterMemoAiSuggestion } from '../types/aiAnalysis';
 import type { ScreenProps } from '../types/navigation';
 import type { Person, PersonCategory } from '../types/person';
 
@@ -1320,7 +1321,7 @@ function createAfterMemoSuggestion({
   talkMemo: string;
   allInfoMemo: string;
   nextTodo: string;
-}) {
+}): AfterMemoAiSuggestion {
   const name = person?.name ?? 'この人';
   const sourceText = [Object.values(answers).join('\n'), talkMemo, allInfoMemo, nextTodo].join('\n');
   const inferredPain = inferPain(sourceText);
