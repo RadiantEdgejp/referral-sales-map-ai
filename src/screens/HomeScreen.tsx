@@ -32,6 +32,7 @@ import AttachmentTextInput from '../components/AttachmentTextInput';
 import FilterChip from '../components/FilterChip';
 import PersonCard from '../components/PersonCard';
 import { MOCK_PEOPLE } from '../data/mockPeople';
+import { scheduleContactNotification } from '../notifications/notificationService';
 import { getPeople, savePeople, updatePerson } from '../storage/personStorage';
 import type { AfterMemoAiSuggestion } from '../types/aiAnalysis';
 import type { ScreenProps } from '../types/navigation';
@@ -256,6 +257,8 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           />
         ) : (
           <EndOfDayPane
+            people={activePeople}
+            onPersonUpdated={handlePersonUpdated}
             onAfter={() => setActiveTab('after')}
             onHome={() => setActiveTab('home')}
             onCoach={(initialPrompt) => navigation.navigate('CoachChat', { initialPrompt })}
@@ -1557,29 +1560,93 @@ function LegacyLineCheckPane({
   );
 }
 
+const END_OF_DAY_REMINDER_OPTIONS = [
+  { label: '明日 9:00', days: 1 },
+  { label: '3日後 9:00', days: 3 },
+  { label: '1週間後 9:00', days: 7 },
+];
+
+function isSameCalendarDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function summarizeNames(people: Person[], limit = 3) {
+  const names = people.slice(0, limit).map((person) => person.name);
+  const rest = people.length - names.length;
+  return rest > 0 ? `${names.join('・')} 他${rest}名` : names.join('・');
+}
+
 function EndOfDayPane({
+  people,
+  onPersonUpdated,
   onAfter,
   onHome,
   onCoach,
 }: {
+  people: Person[];
+  onPersonUpdated: (person: Person) => void;
   onAfter: () => void;
   onHome: () => void;
   onCoach: (initialPrompt: string) => void;
 }) {
-  const [notificationOpen, setNotificationOpen] = useState(false);
   const [completed, setCompleted] = useState(false);
-  const [homeReflected, setHomeReflected] = useState(false);
+  const [reminderTarget, setReminderTarget] = useState<Person | null>(null);
+  const [reminderNotice, setReminderNotice] = useState('');
 
-  const showSaveAlert = (message = '人脈カードに保存しました') => {
-    Alert.alert(message, '未保存データを人脈カードへ反映する想定です。');
+  const today = new Date();
+  const updatedToday = useMemo(
+    () => people.filter((person) => person.updatedAt && isSameCalendarDay(new Date(person.updatedAt), today)),
+    [people],
+  );
+  const memoMissing = useMemo(() => people.filter((person) => !person.additionalMemo), [people]);
+  const contactDateMissing = useMemo(() => people.filter((person) => !person.nextContactAt), [people]);
+  const actionMissing = useMemo(() => people.filter((person) => !person.nextAction), [people]);
+  const overduePeople = useMemo(() => people.filter((person) => getDueState(person) === 'overdue'), [people]);
+  const gapCount = useMemo(
+    () => new Set([...memoMissing, ...contactDateMissing, ...actionMissing].map((person) => person.id)).size,
+    [actionMissing, contactDateMissing, memoMissing],
+  );
+  const tomorrowPriorities = useMemo(
+    () => [...people].sort((a, b) => priorityScore(b) - priorityScore(a)).slice(0, 3),
+    [people],
+  );
+
+  const applyReminder = async (days: number) => {
+    if (!reminderTarget) {
+      return;
+    }
+
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    date.setHours(9, 0, 0, 0);
+
+    let notificationId = reminderTarget.notificationId;
+    let notice = `${reminderTarget.name}の次回連絡日を ${formatDateTime(date.toISOString())} に設定しました`;
+    try {
+      notificationId = await scheduleContactNotification(reminderTarget, date);
+    } catch {
+      notice += '（通知は設定できませんでした）';
+    }
+
+    const saved = await updatePerson({
+      ...reminderTarget,
+      nextContactAt: date.toISOString(),
+      notificationId,
+    });
+    onPersonUpdated(saved);
+    setReminderTarget(null);
+    setReminderNotice(notice);
   };
 
-  const showNextAction = () => {
-    Alert.alert(
-      '次アクション案',
-      '次に聞く質問：不動産顧客層の動きで、最近増えている相談は何ですか？\n送る文：本日はありがとうございました。伺った内容を整理して、また共有します。\n次回連絡日：3日後 9:00\n注意点：情報取得だけで終わらず、こちらから渡せる情報も用意する。',
+  if (people.length === 0) {
+    return (
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <Section title="終業後チェック" subtitle="今日の営業を整理し、明日の営業地図に反映する">
+          <Text style={styles.emptyText}>まだ人脈カードがありません。人脈タブから最初の1人を追加すると、ここで1日の漏れを確認できます。</Text>
+        </Section>
+      </ScrollView>
     );
-  };
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -1587,12 +1654,9 @@ function EndOfDayPane({
         <View style={styles.paneHeaderText}>
           <Text style={styles.paneTitle}>終業後チェック</Text>
           <Text style={styles.paneSubcopy}>今日の営業を整理し、明日の営業地図に反映する</Text>
-          <Text style={styles.dateText}>6月19日</Text>
+          <Text style={styles.dateText}>{`${today.getMonth() + 1}月${today.getDate()}日`}</Text>
         </View>
         <View style={styles.paneHeaderActions}>
-          <Pressable style={styles.smallOutlineButton} onPress={() => Alert.alert('今日の履歴', '今日の営業行動履歴を開く想定です。')}>
-            <Text style={styles.smallOutlineText}>履歴</Text>
-          </Pressable>
           <Pressable style={styles.smallOutlineButton} onPress={onHome}>
             <Text style={styles.smallOutlineText}>明日</Text>
           </Pressable>
@@ -1600,226 +1664,158 @@ function EndOfDayPane({
       </View>
 
       <View style={styles.endSummaryGrid}>
-        <EndSummaryCard label="完了" value="4件" />
-        <EndSummaryCard label="未完了" value="2件" warning />
-        <EndSummaryCard label="入力漏れ" value="3件" danger />
-        <EndSummaryCard label="明日へ回す" value="2件" />
+        <EndSummaryCard label="今日更新した人脈カード" value={`${updatedToday.length}件`} />
+        <EndSummaryCard label="連絡日超過" value={`${overduePeople.length}件`} warning />
+        <EndSummaryCard label="入力漏れのある人" value={`${gapCount}件`} danger />
+        <EndSummaryCard label="人脈カード合計" value={`${people.length}件`} />
       </View>
 
-      <Section title="今日の営業結果" subtitle="今日行った営業アクションと、次に必要な処理を確認します。">
-        <EndResultRow
-          index={1}
-          name="山本さん"
-          action="初回連絡"
-          status="完了"
-          result="返信あり"
-          next="後メモ入力済み"
-          onAfter={onAfter}
-          onTomorrow={() => Alert.alert('明日に回しました', '山本さんの情報提供LINE準備を明日のホームに出す想定です。')}
-        />
-        <EndResultRow
-          index={2}
-          name="田中さん"
-          action="情報交換LINE"
-          status="完了"
-          result="返信待ち"
-          next="3日後に確認通知"
-          onAfter={onAfter}
-          onTomorrow={() => Alert.alert('明日に回しました', '田中さんの返信待ち確認を明日の候補に入れました。')}
-        />
-        <EndResultRow
-          index={3}
-          name="佐藤さん"
-          action="情報交換"
-          status="完了"
-          result="会話済み"
-          next="後メモ未入力"
-          onAfter={onAfter}
-          onTomorrow={() => Alert.alert('明日に回しました', '佐藤さんの後メモ入力を明日の優先行動に追加します。')}
-        />
-        <EndResultRow
-          index={4}
-          name="村上さん"
-          action="追客LINE"
-          status="未完了"
-          result="未送信"
-          next="明日に延期候補"
-          onAfter={onAfter}
-          onTomorrow={() => Alert.alert('明日に回しました', '村上さんの追客LINEを明日のホームに追加します。')}
-        />
+      <Section title="未処理チェック" subtitle="営業データとして保存されていないものを潰します。">
+        {memoMissing.length > 0 ? (
+          <UnprocessedCard
+            type="後メモ未入力"
+            target={summarizeNames(memoMissing)}
+            body={`${memoMissing.length}件の人脈カードに、会話後のメモがまだ入力されていません。`}
+            reason="会話内容を記録しないと、相手の課題・温度感・紹介可能性が人脈カードに蓄積されません。"
+            button="後メモを入力"
+            onPress={onAfter}
+          />
+        ) : null}
+        {contactDateMissing.length > 0 ? (
+          <UnprocessedCard
+            type="次回連絡日未設定"
+            target={summarizeNames(contactDateMissing)}
+            body={`${contactDateMissing.length}件の人脈カードに次回連絡日が設定されていません。`}
+            reason="次回連絡日がないと、将来候補が放置される可能性があります。"
+            button="通知を設定"
+            onPress={() => setReminderTarget(contactDateMissing[0])}
+          />
+        ) : null}
+        {actionMissing.length > 0 ? (
+          <UnprocessedCard
+            type="次アクション未設定"
+            target={summarizeNames(actionMissing)}
+            body={`${actionMissing.length}件の人脈カードで、次に何をするかが決まっていません。`}
+            reason="次アクションがないと、情報源候補として活かせません。"
+            button="後メモで次アクションを作る"
+            onPress={onAfter}
+          />
+        ) : null}
+        {memoMissing.length === 0 && contactDateMissing.length === 0 && actionMissing.length === 0 ? (
+          <Text style={styles.emptyText}>未処理はありません。すべての人脈カードに記録・次回連絡日・次アクションが揃っています。</Text>
+        ) : null}
       </Section>
 
-      <Section title="未処理チェック" subtitle="今日やったのに、まだ営業データとして保存されていないものを潰します。">
-        <UnprocessedCard
-          type="後メモ未入力"
-          target="佐藤さん"
-          body="13:00に情報交換済みですが、会話後メモが未入力です。"
-          reason="会話内容を記録しないと、相手の課題・温度感・紹介可能性が人脈カードに蓄積されません。"
-          button="後メモを入力"
-          onPress={onAfter}
-        />
-        <UnprocessedCard
-          type="次回連絡日未設定"
-          target="山本さん"
-          body="初回連絡後の返信はありましたが、次回連絡日が設定されていません。"
-          reason="次回連絡日がないと、将来候補が放置される可能性があります。"
-          button="通知を設定"
-          onPress={() => setNotificationOpen(true)}
-        />
-        <UnprocessedCard
-          type="LINEチェック未保存"
-          target="田中さん"
-          body="LINEチェックで返信文案を作成しましたが、人脈カードに保存されていません。"
-          reason="LINE上の会話情報を保存しないと、次回の予定前ナビで参照できません。"
-          button="人脈カードに保存"
-          onPress={() => showSaveAlert()}
-        />
-        <UnprocessedCard
-          type="次アクション未設定"
-          target="佐藤さん"
-          body="情報交換後、次に何を聞くかが決まっていません。"
-          reason="次アクションがないと、情報源候補として活かせません。"
-          button="次アクションを作る"
-          onPress={showNextAction}
-        />
-      </Section>
-
-      <Section title="今日の人脈カード更新" subtitle="今日、人脈カードに追加・更新された情報を確認します。">
-        <CardUpdateRow
-          name="山本さん"
-          status="更新済み"
-          body="・課題：リピート率\n・関心：SNS運用、再来店施策\n・分類更新：将来候補 高\n・次アクション：3日後に情報提供LINE"
-        />
-        <CardUpdateRow
-          name="田中さん"
-          status="一部未保存"
-          body="・情報交換LINE作成\n・返信待ち状態に変更\n・次回確認通知：3日後"
-          actionLabel="保存する"
-          onPress={() => showSaveAlert('田中さんの人脈カードに保存しました')}
-        />
-        <CardUpdateRow
-          name="佐藤さん"
-          status="未処理"
-          body="後メモ未入力のため、まだ更新なし"
-          actionLabel="後メモを入力"
-          onPress={onAfter}
-        />
+      <Section title="今日の人脈カード更新" subtitle="今日、追加・更新された人脈カードを確認します。">
+        {updatedToday.length > 0 ? (
+          updatedToday.map((person) => (
+            <CardUpdateRow
+              key={person.id}
+              name={person.name}
+              status="更新済み"
+              body={`・次アクション：${person.nextAction || '未設定'}\n・次回連絡：${formatDateTime(person.nextContactAt)}`}
+            />
+          ))
+        ) : (
+          <Text style={styles.emptyText}>今日更新された人脈カードはまだありません。</Text>
+        )}
       </Section>
 
       <Section title="今日の営業フィードバック">
-        <Info label="今日の良かった点" value="初回連絡と情報交換の行動数は増えています。特に山本さんには、いきなり提案せず店舗経営課題を聞けています。" />
-        <Info label="今日の改善点" value="会話後の記録が遅れています。佐藤さんとの情報交換後メモが未入力のため、情報源候補としての価値が人脈カードに蓄積されていません。" />
-        <Info label="今日の営業傾向" value="初回接触はできているが、会話後の分類更新・次アクション設定が弱い。" />
-        <Info label="明日の改善テーマ" value="会話後は必ず「課題・温度感・次アクション・次回連絡日」を決めて終える。" />
+        <Info
+          label="今日の状況"
+          value={
+            updatedToday.length > 0
+              ? `今日は${updatedToday.length}件の人脈カードを更新できています。会話や返信を営業データに残せています。`
+              : '今日はまだ人脈カードの更新がありません。会話やLINEのやり取りがあれば、後メモ・文面確認から記録しましょう。'
+          }
+        />
+        <Info
+          label="今日の改善点"
+          value={
+            gapCount > 0
+              ? `入力漏れのある人脈カードが${gapCount}件あります。特に${memoMissing.length > 0 ? `後メモ未入力（${memoMissing.length}件）` : `次回連絡日・次アクションの未設定（${contactDateMissing.length + actionMissing.length}件）`}を先に潰すのが安全です。`
+              : '入力漏れはありません。この状態を毎日維持しましょう。'
+          }
+        />
         <Info label="科学的根拠" value="会話直後は記憶が新しく、相手の課題や温度感を正確に記録しやすい。時間が空くほど情報が抜け、次アクションの精度が落ちやすい。" />
-        <View style={styles.inlineActions}>
-          <Pressable
-            style={styles.secondaryCta}
-            onPress={() =>
-              onCoach('今日の営業では初回連絡はできましたが、会話後メモと次アクション設定が弱いです。明日からどう改善すべきか相談したいです。')
-            }
-          >
-            <Text style={styles.secondaryCtaText}>営業コーチに相談</Text>
-          </Pressable>
-          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('改善タスク', '後メモ入力、次回連絡日設定、LINEチェック保存を今日中に処理します。')}>
-            <Text style={styles.secondaryCtaText}>改善タスクを見る</Text>
-          </Pressable>
-        </View>
-      </Section>
-
-      <Section title="明日に回すもの" subtitle="今日終わらなかった営業行動を、明日のホームに反映します。">
-        <TomorrowCarryRow
-          name="村上さん"
-          unfinished="追客LINE"
-          reason="今日送れなかった"
-          tomorrow="軽い近況LINEを送る"
-          primary="明日に追加"
-          secondary="削除"
-        />
-        <TomorrowCarryRow
-          name="佐藤さん"
-          unfinished="後メモ入力"
-          reason="情報交換後メモが未入力"
-          tomorrow="後メモを入力して人脈カードを更新"
-          primary="明日に追加"
-          secondary="今入力する"
-          onSecondary={onAfter}
-        />
-        <TomorrowCarryRow
-          name="田中さん"
-          unfinished="返信待ち確認"
-          reason="返信確認タイミングを固定したい"
-          tomorrow="返信がなければ3日後通知に設定"
-          primary="通知設定"
-          secondary="削除"
-          onPrimary={() => setNotificationOpen(true)}
-        />
-      </Section>
-
-      <Section title="明日のホーム反映案" subtitle="終業後チェックの結果から、明日のホームに出す内容を確認します。">
-        <View style={styles.navSummaryCard}>
-          <Info label="明日の営業テーマ" value="会話後メモと次アクション設定を優先する" compact />
-          <Info label="明日の優先行動" value="1. 佐藤さん：後メモ入力。情報交換済みだが人脈カード未更新\n2. 村上さん：追客LINE。今日未完了\n3. 山本さん：情報提供LINE準備。リピート率の課題が出ている" compact />
-          <Info label="明日の注意" value="新規提案より、今日得た情報の整理と追客漏れ防止を優先する" compact />
-        </View>
-        <View style={styles.inlineActions}>
-          <Pressable
-            style={styles.primaryCta}
-            onPress={() => {
-              setHomeReflected(true);
-              Alert.alert('明日のホームに反映しました', '明日のホームに表示する予定の行動リストとして保存する想定です。');
-            }}
-          >
-            <Text style={styles.primaryCtaText}>明日のホームに反映</Text>
-          </Pressable>
-          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('編集', '明日のホーム反映案を編集する想定です。')}>
-            <Text style={styles.secondaryCtaText}>編集する</Text>
-          </Pressable>
-        </View>
-        {homeReflected ? <Text style={styles.successNotice}>明日のホームに反映しました</Text> : null}
-      </Section>
-
-      <Pressable
-        style={styles.fullPrimaryButton}
-        onPress={() => {
-          setCompleted(true);
-          Alert.alert('終業後チェックが完了しました', '明日のホームに反映されます。');
-        }}
-      >
-        <Text style={styles.fullPrimaryText}>終業後チェックを完了する</Text>
-      </Pressable>
-      {completed ? <Text style={styles.successNotice}>終業後チェックが完了しました。明日のホームに反映されます。</Text> : null}
-
-      <Section title="終業後チェック履歴">
-        <Route title="6月18日" meta="完了：4件 / 未完了：2件 / 入力漏れ：3件 / 明日に回した件数：2件" />
-        <Info label="改善テーマ" value="会話後メモを必ず入力する" />
-        <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('履歴詳細', '6月18日の終業後チェック詳細を開く想定です。')}>
-          <Text style={styles.secondaryCtaText}>詳細を見る</Text>
+        <Pressable
+          style={styles.secondaryCta}
+          onPress={() =>
+            onCoach(
+              `今日は人脈カードを${updatedToday.length}件更新しました。後メモ未入力が${memoMissing.length}件、次回連絡日未設定が${contactDateMissing.length}件あります。明日からどう改善すべきか相談したいです。`,
+            )
+          }
+        >
+          <Text style={styles.secondaryCtaText}>営業コーチに相談</Text>
         </Pressable>
       </Section>
 
-      <Modal visible={notificationOpen} transparent animationType="fade" onRequestClose={() => setNotificationOpen(false)}>
+      <Section title="明日に回すもの" subtitle="連絡日を過ぎている人を、明日以降の行動に変えます。">
+        {overduePeople.length > 0 ? (
+          overduePeople.map((person) => (
+            <TomorrowCarryRow
+              key={person.id}
+              name={person.name}
+              unfinished={person.nextAction || '次アクション未設定'}
+              reason={`次回連絡日（${formatDateTime(person.nextContactAt)}）を過ぎている`}
+              tomorrow="連絡日を設定し直して追客漏れを防ぐ"
+              primary="通知を設定"
+              secondary="後メモを入力"
+              onPrimary={() => setReminderTarget(person)}
+              onSecondary={onAfter}
+            />
+          ))
+        ) : (
+          <Text style={styles.emptyText}>連絡日を過ぎている人はいません。</Text>
+        )}
+      </Section>
+
+      <Section title="明日のホーム反映" subtitle="現在の人脈カードから、明日のホームに出る優先行動を確認します。">
+        <View style={styles.navSummaryCard}>
+          <Info
+            label="明日の優先行動"
+            value={
+              tomorrowPriorities.length > 0
+                ? tomorrowPriorities
+                    .map((person, index) => `${index + 1}. ${person.name}：${person.nextAction || '次アクションを決める'}`)
+                    .join('\n')
+                : '対象の人脈カードがありません。'
+            }
+            compact
+          />
+          <Info
+            label="明日の注意"
+            value={gapCount > 0 ? '新規提案より、今日得た情報の整理と追客漏れ防止を優先する' : '入力漏れがない状態です。次の接触の質を上げることに集中する'}
+            compact
+          />
+        </View>
+        <Pressable style={styles.primaryCta} onPress={onHome}>
+          <Text style={styles.primaryCtaText}>明日のホームを確認する</Text>
+        </Pressable>
+      </Section>
+
+      <Pressable style={styles.fullPrimaryButton} onPress={() => setCompleted(true)}>
+        <Text style={styles.fullPrimaryText}>終業後チェックを完了する</Text>
+      </Pressable>
+      {completed ? <Text style={styles.successNotice}>終業後チェックを完了しました。ホームは常に最新の人脈カードから生成されます。</Text> : null}
+      {reminderNotice ? <Text style={styles.successNotice}>{reminderNotice}</Text> : null}
+
+      <Modal visible={reminderTarget !== null} transparent animationType="fade" onRequestClose={() => setReminderTarget(null)}>
         <View style={styles.sheetBackdrop}>
           <View style={styles.personPickerSheet}>
             <View style={styles.sheetHeader}>
               <View>
-                <Text style={styles.sheetTitle}>通知を設定</Text>
-                <Text style={styles.sheetSubcopy}>次回連絡日未設定の人に通知を設定します。</Text>
+                <Text style={styles.sheetTitle}>次回連絡日を設定</Text>
+                <Text style={styles.sheetSubcopy}>{reminderTarget ? `${reminderTarget.name}の次回連絡日と通知を設定します。` : ''}</Text>
               </View>
-              <Pressable style={styles.sheetCloseButton} onPress={() => setNotificationOpen(false)}>
+              <Pressable style={styles.sheetCloseButton} onPress={() => setReminderTarget(null)}>
                 <Text style={styles.sheetCloseText}>閉じる</Text>
               </Pressable>
             </View>
-            {['明日 9:00', '3日後 9:00', '1週間後', '1ヶ月後', '日付を選ぶ', '通知なし'].map((option) => (
-              <Pressable
-                key={option}
-                style={styles.personSelectCard}
-                onPress={() => {
-                  setNotificationOpen(false);
-                  Alert.alert('通知を設定しました', `${option} に通知する想定です。`);
-                }}
-              >
-                <Text style={styles.personSelectName}>{option}</Text>
+            {END_OF_DAY_REMINDER_OPTIONS.map((option) => (
+              <Pressable key={option.label} style={styles.personSelectCard} onPress={() => applyReminder(option.days)}>
+                <Text style={styles.personSelectName}>{option.label}</Text>
               </Pressable>
             ))}
           </View>
@@ -1834,54 +1830,6 @@ function EndSummaryCard({ label, value, warning, danger }: { label: string; valu
     <View style={[styles.endSummaryCard, warning && styles.endSummaryWarning, danger && styles.endSummaryDanger]}>
       <Text style={styles.endSummaryValue}>{value}</Text>
       <Text style={styles.endSummaryLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function EndResultRow({
-  index,
-  name,
-  action,
-  status,
-  result,
-  next,
-  onAfter,
-  onTomorrow,
-}: {
-  index: number;
-  name: string;
-  action: string;
-  status: string;
-  result: string;
-  next: string;
-  onAfter: () => void;
-  onTomorrow: () => void;
-}) {
-  return (
-    <View style={styles.endResultRow}>
-      <View style={styles.endResultHeader}>
-        <Text style={styles.endResultIndex}>{index}</Text>
-        <View style={styles.endResultBody}>
-          <Text style={styles.rowName}>{name}</Text>
-          <Text style={styles.rowMeta}>行動：{action} / 状態：{status}</Text>
-          <Text style={styles.rowMeta}>結果：{result}</Text>
-          <Text style={styles.todoLine}>次の処理：{next}</Text>
-        </View>
-      </View>
-      <View style={styles.actionGrid}>
-        <Pressable style={styles.rowButton} onPress={() => Alert.alert('詳細', `${name}の今日の営業詳細を開く想定です。`)}>
-          <Text style={styles.rowButtonText}>詳細</Text>
-        </Pressable>
-        <Pressable style={styles.rowButton} onPress={onAfter}>
-          <Text style={styles.rowButtonText}>後メモ</Text>
-        </Pressable>
-        <Pressable style={styles.rowButton} onPress={() => Alert.alert('人脈カード', `${name}の人脈カードを開く想定です。`)}>
-          <Text style={styles.rowButtonText}>人脈カード</Text>
-        </Pressable>
-        <Pressable style={styles.rowButton} onPress={onTomorrow}>
-          <Text style={styles.rowButtonText}>明日に回す</Text>
-        </Pressable>
-      </View>
     </View>
   );
 }
@@ -1961,8 +1909,8 @@ function TomorrowCarryRow({
   tomorrow: string;
   primary: string;
   secondary: string;
-  onPrimary?: () => void;
-  onSecondary?: () => void;
+  onPrimary: () => void;
+  onSecondary: () => void;
 }) {
   return (
     <View style={styles.tomorrowRow}>
@@ -1971,10 +1919,10 @@ function TomorrowCarryRow({
       <Text style={styles.rowMeta}>明日に回す理由：{reason}</Text>
       <Text style={styles.todoLine}>明日の行動：{tomorrow}</Text>
       <View style={styles.inlineActions}>
-        <Pressable style={styles.primaryCta} onPress={onPrimary ?? (() => Alert.alert('明日に追加しました', `${name}を明日のホームに追加する想定です。`))}>
+        <Pressable style={styles.primaryCta} onPress={onPrimary}>
           <Text style={styles.primaryCtaText}>{primary}</Text>
         </Pressable>
-        <Pressable style={styles.secondaryCta} onPress={onSecondary ?? (() => Alert.alert(secondary, `${name}の項目を処理する想定です。`))}>
+        <Pressable style={styles.secondaryCta} onPress={onSecondary}>
           <Text style={styles.secondaryCtaText}>{secondary}</Text>
         </Pressable>
       </View>
