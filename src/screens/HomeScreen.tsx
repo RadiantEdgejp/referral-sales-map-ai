@@ -36,6 +36,7 @@ import { getPeople, savePeople } from '../storage/personStorage';
 import type { AfterMemoAiSuggestion } from '../types/aiAnalysis';
 import type { ScreenProps } from '../types/navigation';
 import type { Person, PersonCategory } from '../types/person';
+import { formatDateTime } from '../utils/date';
 
 type MainTab = 'home' | 'people' | 'pre' | 'after' | 'line' | 'end';
 type SortMode = 'priority' | 'nextContact' | 'newest' | 'referrer';
@@ -186,18 +187,26 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
         <Header
           activeTab={activeTab}
           planUpdated={planUpdated}
-          onNotice={() =>
-            Alert.alert('今日の通知', '10:00 山本さんに初回LINE\n13:00 佐藤さんと情報交換\n18:00 田中さんに近況LINE')
-          }
+          onNotice={() => {
+            const dueToday = people
+              .filter((person) => getDueState(person) === 'today')
+              .sort((a, b) => dateValue(a.nextContactAt) - dateValue(b.nextContactAt));
+            Alert.alert(
+              '今日の通知',
+              dueToday.length > 0
+                ? dueToday.map((person) => `${formatTime(person.nextContactAt)} ${person.name}：${person.nextAction || person.goal}`).join('\n')
+                : '今日の通知はありません。',
+            );
+          }}
           onRefresh={() => {
             setPlanUpdated(true);
-            Alert.alert('今日の計画を更新しました', 'モックの営業地図を再生成しました。');
+            Alert.alert('今日の計画を更新しました', '人脈カードの最新データから営業地図を再生成しました。');
           }}
           onAdd={() => navigation.navigate('AddPerson')}
         />
 
         {activeTab === 'home' ? (
-          <HomePane actions={actions} planUpdated={planUpdated} onOpenPerson={openPerson} />
+          <HomePane people={people} actions={actions} planUpdated={planUpdated} onOpenPerson={openPerson} />
         ) : activeTab === 'people' ? (
           <PeoplePane
             people={filteredPeople}
@@ -293,13 +302,14 @@ function Header({
   onAdd: () => void;
 }) {
   const meta = SCREEN_META[activeTab];
+  const today = new Date();
 
   return (
     <View style={styles.header}>
       <View style={styles.headerText}>
         <Text style={styles.screenName}>{meta.screenName}</Text>
         <Text style={styles.appName}>{meta.title}</Text>
-        <Text style={styles.dateText}>6月19日</Text>
+        <Text style={styles.dateText}>{`${today.getMonth() + 1}月${today.getDate()}日`}</Text>
         <Text style={styles.subcopy}>{meta.subcopy}</Text>
         {planUpdated ? <Text style={styles.updatedNotice}>今日の計画を更新済み</Text> : null}
       </View>
@@ -319,65 +329,118 @@ function Header({
 }
 
 function HomePane({
+  people,
   actions,
   planUpdated,
   onOpenPerson,
 }: {
+  people: Person[];
   actions: TodayAction[];
   planUpdated: boolean;
   onOpenPerson: (personId?: string) => void;
 }) {
+  const todaySchedule = useMemo(
+    () =>
+      people
+        .filter((person) => getDueState(person) === 'today')
+        .sort((a, b) => dateValue(a.nextContactAt) - dateValue(b.nextContactAt)),
+    [people],
+  );
+  const overduePeople = useMemo(
+    () => people.filter((person) => getDueState(person) === 'overdue'),
+    [people],
+  );
+  const preMeetingPerson = todaySchedule[0];
+
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Section title="今日の営業テーマ">
-        <Info label="テーマ" value="紹介直後の人を放置せず、初回接触を完了する" compact />
+        <Info label="テーマ" value="次回連絡日が近い人を放置せず、今日の接触を完了する" compact />
         <Info label="今日の狙い" value="売り込みではなく、課題確認と関係構築を優先する" compact />
         <Info label="今日の注意" value="紹介依頼を急がない。まず情報交換を挟む" compact />
-        <Info label="根拠" value="紹介直後は記憶と信頼が残るため、初回接触が遅いほど反応率が下がりやすい" compact />
         {planUpdated ? <Text style={styles.updatedNotice}>再生成された今日の営業地図です</Text> : null}
       </Section>
 
       <Section title="今日の優先行動" subtitle="誰に・なぜ・何をするかだけ確認します。">
-        {actions.map((item) => (
-          <Pressable key={item.id} style={styles.priorityRow} onPress={() => onOpenPerson(item.personId)}>
-            <View style={styles.priorityHeader}>
-              <Text style={styles.priorityBadge}>{item.priority}</Text>
-              <Text style={styles.rowName}>{item.personName}</Text>
-              <Text style={styles.actionType}>{item.actionType}</Text>
-            </View>
-            <Text style={styles.shortReason}>{item.shortReason}</Text>
-            <Text style={styles.todoLine}>今日やること：{item.todayTodo}</Text>
-            <View style={styles.rowButtons}>
-              <MiniButton label="詳細" />
-              <MiniButton label="完了" />
-              <MiniButton label="延期" />
-            </View>
-          </Pressable>
-        ))}
+        {actions.length > 0 ? (
+          actions.map((item) => (
+            <Pressable key={item.id} style={styles.priorityRow} onPress={() => onOpenPerson(item.personId)}>
+              <View style={styles.priorityHeader}>
+                <Text style={styles.priorityBadge}>{item.priority}</Text>
+                <Text style={styles.rowName}>{item.personName}</Text>
+                <Text style={styles.actionType}>{item.actionType}</Text>
+              </View>
+              <Text style={styles.shortReason}>{item.shortReason}</Text>
+              <Text style={styles.todoLine}>今日やること：{item.todayTodo}</Text>
+              <View style={styles.rowButtons}>
+                <MiniButton label="詳細" />
+                <MiniButton label="完了" />
+                <MiniButton label="延期" />
+              </View>
+            </Pressable>
+          ))
+        ) : (
+          <Text style={styles.emptyText}>まだ人脈カードがありません。人脈タブから最初の1人を追加すると、ここに優先行動が表示されます。</Text>
+        )}
       </Section>
 
       <Section title="今日の予定と通知">
-        <Schedule time="10:00" title="山本さんに初回LINE" purpose="紹介直後の初回接触" />
-        <Schedule time="13:00" title="佐藤さんと情報交換" purpose="不動産顧客層の情報取得" />
-        <Schedule time="18:00" title="田中さんに近況LINE" purpose="美容業界の課題確認" />
+        {todaySchedule.length > 0 ? (
+          todaySchedule.map((person) => (
+            <Schedule
+              key={person.id}
+              time={formatTime(person.nextContactAt)}
+              title={`${person.name}に連絡`}
+              purpose={person.nextAction || person.goal}
+            />
+          ))
+        ) : (
+          <Text style={styles.emptyText}>今日が次回連絡日の人はいません。</Text>
+        )}
       </Section>
 
       <Section title="今日進める営業ルート">
-        <Route title="山本さん → 本人の店舗課題確認" meta="顧客化ルート / 紹介直後 / 初回接触" />
-        <Route title="田中さん → 美容業界の経営者人脈" meta="紹介元化ルート / 情報交換前 / 採用・集客課題を聞く" />
-        <Route title="佐藤さん → 資産形成層の情報" meta="情報源化ルート / 質問準備 / 不動産顧客層の動きを聞く" />
+        {actions.length > 0 ? (
+          actions.map((item) => {
+            const person = people.find((candidate) => candidate.id === item.personId);
+            return (
+              <Route
+                key={item.id}
+                title={`${item.personName} → ${item.todayTodo}`}
+                meta={`${person?.categories.join('・') ?? '分類未設定'} / ${item.actionType}`}
+              />
+            );
+          })
+        ) : (
+          <Text style={styles.emptyText}>進行中の営業ルートはまだありません。</Text>
+        )}
       </Section>
 
       <Section title="会う前チェック">
-        <Info label="佐藤さん" value="13:00 情報交換" />
-        <Info label="目的" value="不動産顧客層の動きを聞く" />
-        <Info label="最初の質問" value="最近、不動産を検討する方って、投資目的と自宅目的だとどちらが多いですか？" />
-        <Info label="注意" value="一方的に聞くだけで終わらない。情報交換の形にする。" />
+        {preMeetingPerson ? (
+          <>
+            <Info label={preMeetingPerson.name} value={`${formatTime(preMeetingPerson.nextContactAt)} 連絡・接触予定`} />
+            <Info label="目的" value={preMeetingPerson.goal} />
+            <Info label="最初の質問" value={preMeetingPerson.nextQuestion} />
+            <Info label="注意" value={preMeetingPerson.cautions} />
+          </>
+        ) : (
+          <Text style={styles.emptyText}>今日会う予定の人はいません。予定前ナビは相手を選ぶと使えます。</Text>
+        )}
       </Section>
 
       <Section title="会った後に処理するもの">
-        <Route title="佐藤さん" meta="13:00の情報交換後にメモ入力" />
-        <Route title="山本さん" meta="返信が来たら分類と次回連絡日を更新" />
+        {overduePeople.length > 0 ? (
+          overduePeople.map((person) => (
+            <Route
+              key={person.id}
+              title={person.name}
+              meta={`次回連絡日（${formatDateTime(person.nextContactAt)}）超過。対応したら後メモを入力して次回連絡日を更新`}
+            />
+          ))
+        ) : (
+          <Text style={styles.emptyText}>未処理の連絡漏れはありません。</Text>
+        )}
       </Section>
 
       <Section title="今日の営業コーチ指摘">
@@ -698,10 +761,13 @@ function PreMeetingPane({
               <Info label="業種" value={selectedPerson?.industry ?? '未選択'} compact />
               <Info label="関係性" value={selectedPerson?.relationship ?? '未選択'} compact />
               <Info label="現在の分類" value={selectedPerson?.categories.join(' / ') ?? '未選択'} compact />
-              <Info label="前回の接触" value={selectedPerson?.name.includes('田中') ? '3日前' : selectedPerson?.name.includes('山本') ? '紹介直後' : '本日13:00予定'} compact />
+              <Info label="次回連絡日" value={formatDateTime(selectedPerson?.nextContactAt)} compact />
             </View>
             <Info label="過去メモ要約" value={selectedPerson?.rawMemo ?? '過去メモはまだありません。'} />
-            <Info label="LINEチェック要約" value={selectedPerson?.name.includes('田中') ? 'まだ具体的な返信履歴なし。売り込み感を抑えた情報交換文が安全。' : '返信内容から温度感と次回連絡日を更新する想定です。'} />
+            <Info
+              label="やり取りの記録"
+              value={selectedPerson?.additionalMemo ? '追加メモに記録あり。人脈カードで確認できます。' : 'まだやり取りの記録はありません。'}
+            />
           </>
         ) : null}
         <View style={styles.inlineActions}>
@@ -2013,10 +2079,10 @@ function dedupePeople(people: Person[]) {
 
 function matchesLinePersonFilter(person: Person, filter: LinePersonFilter) {
   if (filter === '全員') return true;
-  if (filter === '今日予定') return Boolean(person.nextContactAt) || person.name.includes('佐藤');
-  if (filter === '最近やり取り') return person.name.includes('山本') || person.name.includes('田中') || Boolean(person.additionalMemo);
+  if (filter === '今日予定') return isDueToday(person);
+  if (filter === '最近やり取り') return Boolean(person.additionalMemo);
   if (filter === '次アクションあり') return Boolean(person.nextAction);
-  if (filter === '返信待ち') return person.name.includes('山本') || person.nextAction.includes('返信');
+  if (filter === '返信待ち') return person.nextAction.includes('返信');
   if (filter === '最近追加') {
     return Date.now() - new Date(person.createdAt).getTime() < 1000 * 60 * 60 * 24 * 14;
   }
@@ -2024,9 +2090,9 @@ function matchesLinePersonFilter(person: Person, filter: LinePersonFilter) {
 }
 
 function getLinePersonStatus(person: Person) {
-  if (person.name.includes('山本')) return '返信待ち';
-  if (person.name.includes('田中')) return '情報交換中';
-  if (person.name.includes('佐藤')) return '最近更新';
+  if (isDueToday(person)) return '今日連絡';
+  if (person.nextAction.includes('返信')) return '返信待ち';
+  if (person.additionalMemo) return 'やり取りあり';
   return person.nextAction ? '次アクションあり' : '最近追加';
 }
 
@@ -2188,9 +2254,9 @@ function getActionGuidance(actionType: string) {
 }
 
 function createPreMeetingNavigation(person: Person | undefined, actionType: string) {
-  const name = person?.name ?? '田中さん';
-  const industry = person?.industry ?? '美容サロン経営';
-  const categories = person?.categories.join('・') ?? '紹介元候補・情報源候補';
+  const name = person?.name ?? '相手';
+  const industry = person?.industry ?? '相手の業界';
+  const categories = person?.categories.join('・') ?? '分類未設定';
   const isReferralRequest = actionType === '紹介依頼前';
   const isLine = actionType === 'LINE前' || actionType === '初回連絡前';
 
@@ -2365,53 +2431,63 @@ function priorityScore(person: Person) {
   return dueBonus + person.referrerPotential + actionBonus + recentBonus;
 }
 
-function createTodayActions(people: Person[]): TodayAction[] {
-  const yamamoto = findPerson(people, '山本', 'mock-yamamoto');
-  const tanaka = findPerson(people, '田中', 'mock-tanaka');
-  const sato = findPerson(people, '佐藤', 'mock-sato');
+type DueState = 'overdue' | 'today' | 'upcoming' | 'unset';
 
-  return [
-    {
-      id: 'action-yamamoto',
-      priority: '最優先',
-      personName: yamamoto?.name ?? '山本さん',
-      personId: yamamoto?.id ?? 'mock-yamamoto',
-      actionType: '初回連絡',
-      shortReason: '紹介直後。温度感が落ちる前に連絡する',
-      todayTodo: '整体院の経営課題を聞く',
-      purpose: '紹介直後の初回接触を完了し、本人の店舗課題を確認する',
-      question: '整体院の経営で、最近いちばん負担に感じる固定費は何ですか？',
-      message: '山本さん、先日はご紹介でありがとうございました。',
-    },
-    {
-      id: 'action-tanaka',
-      priority: '重要',
-      personName: tanaka?.name ?? '田中さん',
-      personId: tanaka?.id ?? 'mock-tanaka',
-      actionType: '情報交換',
-      shortReason: '美容業界の紹介元候補。紹介依頼前に課題を聞く',
-      todayTodo: '採用・集客の悩みを聞く',
-      purpose: '美容業界の経営者人脈を確認する',
-      question: '美容系の経営者さんって、最近は集客より採用の方が大変だったりしますか？',
-      message: '田中さん、先日はありがとうございました。',
-    },
-    {
-      id: 'action-sato',
-      priority: '予定あり',
-      personName: sato?.name ?? '佐藤さん',
-      personId: sato?.id ?? 'mock-sato',
-      actionType: '会う前準備',
-      shortReason: '今日13時に情報交換予定',
-      todayTodo: '不動産顧客層の動きを聞く準備',
-      purpose: '不動産顧客層の動きを聞く',
-      question: '最近、不動産を検討する方って、投資目的と自宅目的だとどちらが多いですか？',
-      message: '佐藤さん、本日13時よろしくお願いします。',
-    },
-  ];
+function getDueState(person: Person): DueState {
+  if (!person.nextContactAt) return 'unset';
+
+  const next = new Date(person.nextContactAt);
+  const now = new Date();
+  const isSameDay =
+    next.getFullYear() === now.getFullYear() && next.getMonth() === now.getMonth() && next.getDate() === now.getDate();
+
+  if (isSameDay) return 'today';
+  if (next.getTime() < now.getTime()) return 'overdue';
+  return 'upcoming';
 }
 
-function findPerson(people: Person[], keyword: string, fallbackId: string) {
-  return people.find((person) => person.name.includes(keyword)) ?? people.find((person) => person.id === fallbackId);
+function isDueToday(person: Person) {
+  const due = getDueState(person);
+  return due === 'today' || due === 'overdue';
+}
+
+function formatTime(value?: string) {
+  if (!value) return '--:--';
+  const date = new Date(value);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+const PRIORITY_LABELS = ['最優先', '重要', '次点'];
+
+function createTodayActions(people: Person[]): TodayAction[] {
+  const ranked = [...people].sort((a, b) => priorityScore(b) - priorityScore(a)).slice(0, 3);
+
+  return ranked.map((person, index) => {
+    const due = getDueState(person);
+    const actionType =
+      due === 'today' ? '今日連絡' : due === 'overdue' ? '連絡遅れ' : due === 'upcoming' ? '準備' : '連絡日未設定';
+    const shortReason =
+      due === 'today'
+        ? `今日${formatTime(person.nextContactAt)}が次回連絡のタイミングです`
+        : due === 'overdue'
+          ? `次回連絡日（${formatDateTime(person.nextContactAt)}）を過ぎています。関係が冷える前に接触する`
+          : due === 'upcoming'
+            ? `次回連絡日は${formatDateTime(person.nextContactAt)}。今日は準備を進める`
+            : '次回連絡日が未設定です。放置を防ぐため今日決める';
+
+    return {
+      id: `action-${person.id}`,
+      priority: PRIORITY_LABELS[index] ?? '次点',
+      personName: person.name,
+      personId: person.id,
+      actionType,
+      shortReason,
+      todayTodo: person.nextAction || person.openingTalk || '次アクションを決める',
+      purpose: person.goal,
+      question: person.nextQuestion,
+      message: person.lineMessage,
+    };
+  });
 }
 
 const styles = StyleSheet.create({
