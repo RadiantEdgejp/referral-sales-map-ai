@@ -31,6 +31,8 @@ export type Person = PersonAnalysis & {
   id: string;
   rawMemo: string;
   createdAt: string;
+  updatedAt?: string;
+  archivedAt?: string;
   nextContactAt?: string;
   notificationId?: string;
   additionalMemo?: string;

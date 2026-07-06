@@ -23,6 +23,18 @@ export async function requestNotificationPermission() {
   return requested.granted;
 }
 
+export async function cancelContactNotification(notificationId?: string) {
+  if (!notificationId) {
+    return;
+  }
+
+  try {
+    await Notifications.cancelScheduledNotificationAsync(notificationId);
+  } catch {
+    // 通知が既に配信済み・削除済みの場合は無視する
+  }
+}
+
 export async function scheduleContactNotification(person: Person, date: Date) {
   const granted = await requestNotificationPermission();
   if (!granted) {

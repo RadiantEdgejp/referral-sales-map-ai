@@ -1,17 +1,34 @@
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Bell, CalendarClock } from 'lucide-react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Archive, Bell, CalendarClock } from 'lucide-react-native';
 import AttachmentTextInput from '../components/AttachmentTextInput';
 import SectionCard from '../components/SectionCard';
-import { scheduleContactNotification } from '../notifications/notificationService';
+import { cancelContactNotification, scheduleContactNotification } from '../notifications/notificationService';
 import { getPeople, updatePerson } from '../storage/personStorage';
 import type { ScreenProps } from '../types/navigation';
 import type { Person } from '../types/person';
 import { formatDateTime } from '../utils/date';
 
-export default function PersonDetailScreen({ route }: ScreenProps<'PersonDetail'>) {
+export default function PersonDetailScreen({ navigation, route }: ScreenProps<'PersonDetail'>) {
   const [person, setPerson] = useState<Person | null>(null);
   const [additionalMemo, setAdditionalMemo] = useState('');
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+
+  const archivePerson = async () => {
+    if (!person) {
+      return;
+    }
+
+    await cancelContactNotification(person.notificationId);
+    await updatePerson({
+      ...person,
+      archivedAt: new Date().toISOString(),
+      notificationId: undefined,
+      additionalMemo,
+    });
+    setArchiveConfirmOpen(false);
+    navigation.goBack();
+  };
 
   useEffect(() => {
     getPeople().then((people) => {
@@ -154,6 +171,40 @@ export default function PersonDetailScreen({ route }: ScreenProps<'PersonDetail'
           <Text style={styles.primaryButtonText}>追加メモを保存</Text>
         </Pressable>
       </SectionCard>
+
+      <SectionCard title="アーカイブ">
+        <Text style={styles.paragraph}>
+          今後の営業対象から外します。過去のメモ・履歴データは削除されず、一覧・検索・相手選択には表示されなくなります。
+        </Text>
+        <Pressable style={styles.archiveButton} onPress={() => setArchiveConfirmOpen(true)}>
+          <Archive color="#B91C1C" size={18} />
+          <Text style={styles.archiveButtonText}>アーカイブする</Text>
+        </Pressable>
+      </SectionCard>
+
+      <Modal
+        visible={archiveConfirmOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setArchiveConfirmOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{person.name}をアーカイブしますか？</Text>
+            <Text style={styles.modalBody}>
+              一覧・検索・相手選択から非表示になります。過去のメモや履歴データは削除されません。設定済みの次回連絡通知は解除されます。
+            </Text>
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancelButton} onPress={() => setArchiveConfirmOpen(false)}>
+                <Text style={styles.modalCancelText}>キャンセル</Text>
+              </Pressable>
+              <Pressable style={styles.modalConfirmButton} onPress={archivePerson}>
+                <Text style={styles.modalConfirmText}>アーカイブする</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -316,6 +367,75 @@ const styles = StyleSheet.create({
   },
   mutedButtonText: {
     color: '#334155',
+  },
+  archiveButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#FECACA',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    marginTop: 12,
+    minHeight: 48,
+  },
+  archiveButtonText: {
+    color: '#B91C1C',
+    fontWeight: '900',
+  },
+  modalBackdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    flex: 1,
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    maxWidth: 420,
+    padding: 20,
+    width: '100%',
+  },
+  modalTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  modalBody: {
+    color: '#334155',
+    lineHeight: 21,
+    marginTop: 10,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 18,
+  },
+  modalCancelButton: {
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 46,
+  },
+  modalCancelText: {
+    color: '#334155',
+    fontWeight: '900',
+  },
+  modalConfirmButton: {
+    alignItems: 'center',
+    backgroundColor: '#B91C1C',
+    borderRadius: 8,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 46,
+  },
+  modalConfirmText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
   },
   scoreRow: {
     alignItems: 'center',

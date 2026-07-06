@@ -32,7 +32,7 @@ import AttachmentTextInput from '../components/AttachmentTextInput';
 import FilterChip from '../components/FilterChip';
 import PersonCard from '../components/PersonCard';
 import { MOCK_PEOPLE } from '../data/mockPeople';
-import { getPeople, savePeople } from '../storage/personStorage';
+import { getPeople, savePeople, updatePerson } from '../storage/personStorage';
 import type { AfterMemoAiSuggestion } from '../types/aiAnalysis';
 import type { ScreenProps } from '../types/navigation';
 import type { Person, PersonCategory } from '../types/person';
@@ -148,11 +148,16 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
     }, [loadPeople]),
   );
 
-  const actions = useMemo(() => createTodayActions(people), [people]);
+  const activePeople = useMemo(() => people.filter((person) => !person.archivedAt), [people]);
+  const handlePersonUpdated = useCallback((updated: Person) => {
+    setPeople((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+  }, []);
+
+  const actions = useMemo(() => createTodayActions(activePeople), [activePeople]);
   const filteredPeople = useMemo(() => {
     const normalized = query.trim().toLowerCase();
 
-    return people
+    return activePeople
       .filter((person) => {
         const matchesQuery =
           !normalized ||
@@ -173,7 +178,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
         return matchesQuery && matchesCategory && matchesIndustry;
       })
       .sort((a, b) => sortPeople(a, b, sortMode));
-  }, [category, industry, people, query, sortMode]);
+  }, [activePeople, category, industry, query, sortMode]);
 
   const openPerson = (personId?: string) => {
     if (personId) {
@@ -188,7 +193,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           activeTab={activeTab}
           planUpdated={planUpdated}
           onNotice={() => {
-            const dueToday = people
+            const dueToday = activePeople
               .filter((person) => getDueState(person) === 'today')
               .sort((a, b) => dateValue(a.nextContactAt) - dateValue(b.nextContactAt));
             Alert.alert(
@@ -206,7 +211,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
         />
 
         {activeTab === 'home' ? (
-          <HomePane people={people} actions={actions} planUpdated={planUpdated} onOpenPerson={openPerson} />
+          <HomePane people={activePeople} actions={actions} planUpdated={planUpdated} onOpenPerson={openPerson} />
         ) : activeTab === 'people' ? (
           <PeoplePane
             people={filteredPeople}
@@ -223,7 +228,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           />
         ) : activeTab === 'pre' ? (
           <PreMeetingPane
-            people={people}
+            people={activePeople}
             initialPersonId={actions[0]?.personId}
             onAfter={() => setActiveTab('after')}
             onLine={() => setActiveTab('line')}
@@ -232,9 +237,9 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           />
         ) : activeTab === 'after' ? (
           <AfterMemoPane
-            people={people}
+            people={activePeople}
             personId={actions[0]?.personId}
-            onPeopleUpdated={setPeople}
+            onPersonUpdated={handlePersonUpdated}
             onLine={() => setActiveTab('line')}
             onEnd={() => setActiveTab('end')}
             onOpenPerson={openPerson}
@@ -242,9 +247,9 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           />
         ) : activeTab === 'line' ? (
           <LineCheckPane
-            people={people}
+            people={activePeople}
             personId={actions[0]?.personId}
-            onPeopleUpdated={setPeople}
+            onPersonUpdated={handlePersonUpdated}
             onAfter={() => setActiveTab('after')}
             onOpenPerson={openPerson}
             onCoach={(initialPrompt) => navigation.navigate('CoachChat', { initialPrompt })}
@@ -894,7 +899,7 @@ function PreMeetingPane({
 function AfterMemoPane({
   people,
   personId,
-  onPeopleUpdated,
+  onPersonUpdated,
   onLine,
   onEnd,
   onOpenPerson,
@@ -902,7 +907,7 @@ function AfterMemoPane({
 }: {
   people: Person[];
   personId?: string;
-  onPeopleUpdated: (people: Person[]) => void;
+  onPersonUpdated: (person: Person) => void;
   onLine: () => void;
   onEnd: () => void;
   onOpenPerson: (personId?: string) => void;
@@ -952,21 +957,15 @@ function AfterMemoPane({
       `AIフィードバック：${suggestion.feedback}`,
     ];
 
-    const updatedPeople = people.map((item) =>
-      item.id === person.id
-        ? {
-            ...item,
-            goal: suggestion.goal,
-            nextAction: suggestion.nextAction,
-            nextQuestion: suggestion.nextQuestion,
-            lineMessage: suggestion.lineMessage,
-            additionalMemo: [item.additionalMemo, memoLines.join('\n')].filter(Boolean).join('\n\n'),
-          }
-        : item,
-    );
-
-    await savePeople(updatedPeople);
-    onPeopleUpdated(updatedPeople);
+    const saved = await updatePerson({
+      ...person,
+      goal: suggestion.goal,
+      nextAction: suggestion.nextAction,
+      nextQuestion: suggestion.nextQuestion,
+      lineMessage: suggestion.lineMessage,
+      additionalMemo: [person.additionalMemo, memoLines.join('\n')].filter(Boolean).join('\n\n'),
+    });
+    onPersonUpdated(saved);
     setUpdatedNotice(true);
     Alert.alert('人脈カードを更新しました', '後メモの内容を人脈カードに蓄積しました。');
   };
@@ -1146,14 +1145,14 @@ type LinePersonFilter = (typeof LINE_PERSON_FILTERS)[number];
 function LineCheckPane({
   people,
   personId,
-  onPeopleUpdated,
+  onPersonUpdated,
   onAfter,
   onOpenPerson,
   onCoach,
 }: {
   people: Person[];
   personId?: string;
-  onPeopleUpdated: (people: Person[]) => void;
+  onPersonUpdated: (person: Person) => void;
   onAfter: () => void;
   onOpenPerson: (personId?: string) => void;
   onCoach: (initialPrompt: string) => void;
@@ -1234,21 +1233,15 @@ function LineCheckPane({
       `注意点：${analysis.caution}`,
     ].join('\n');
 
-    const updatedPeople = people.map((person) =>
-      person.id === selectedPerson.id
-        ? {
-            ...person,
-            nextAction: analysis.nextAction,
-            nextQuestion: analysis.nextQuestion,
-            lineMessage: analysis.replyDraft,
-            cautions: analysis.caution,
-            additionalMemo: [person.additionalMemo, memo].filter(Boolean).join('\n\n'),
-          }
-        : person,
-    );
-
-    await savePeople(updatedPeople);
-    onPeopleUpdated(updatedPeople);
+    const saved = await updatePerson({
+      ...selectedPerson,
+      nextAction: analysis.nextAction,
+      nextQuestion: analysis.nextQuestion,
+      lineMessage: analysis.replyDraft,
+      cautions: analysis.caution,
+      additionalMemo: [selectedPerson.additionalMemo, memo].filter(Boolean).join('\n\n'),
+    });
+    onPersonUpdated(saved);
     setSavedNotice(true);
     Alert.alert('人脈カードに保存しました', 'LINE・DMの内容から抽出した営業データを人脈カードに蓄積しました。');
   };

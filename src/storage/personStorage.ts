@@ -25,7 +25,9 @@ export async function addPerson(person: Person) {
   await savePeople([person, ...people]);
 }
 
-export async function updatePerson(person: Person) {
+export async function updatePerson(person: Person): Promise<Person> {
+  const stamped = { ...person, updatedAt: new Date().toISOString() };
   const people = await getPeople();
-  await savePeople(people.map((item) => (item.id === person.id ? person : item)));
+  await savePeople(people.map((item) => (item.id === stamped.id ? stamped : item)));
+  return stamped;
 }
