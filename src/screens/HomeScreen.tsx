@@ -193,7 +193,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             setPlanUpdated(true);
             Alert.alert('今日の計画を更新しました', 'モックの営業地図を再生成しました。');
           }}
-          onAdd={() => Alert.alert('今日やることを追加', '今日だけ実行する営業行動を追加する想定です。')}
+          onAdd={() => navigation.navigate('AddPerson')}
         />
 
         {activeTab === 'home' ? (
@@ -460,6 +460,11 @@ function PeoplePane({
           <View style={styles.summary}>
             <Text style={styles.summaryText}>人脈カード {people.length}件</Text>
           </View>
+
+          <Pressable style={styles.addPersonButton} onPress={onAddPerson}>
+            <UserPlus color="#FFFFFF" size={18} />
+            <Text style={styles.addPersonButtonText}>人物を追加する</Text>
+          </Pressable>
         </>
       }
       ListEmptyComponent={
@@ -2512,6 +2517,17 @@ const styles = StyleSheet.create({
   filterTitle: { color: '#334155', fontSize: 13, fontWeight: '900', marginBottom: 8, marginTop: 14 },
   filterRow: { flexGrow: 0 },
   summary: { marginBottom: 8, marginTop: 16 },
+  addPersonButton: {
+    alignItems: 'center',
+    backgroundColor: '#153E75',
+    borderRadius: 8,
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    marginBottom: 12,
+    minHeight: 48,
+  },
+  addPersonButtonText: { color: '#FFFFFF', fontWeight: '900' },
   summaryText: { color: '#64748B', fontWeight: '900' },
   empty: { backgroundColor: '#FFFFFF', borderColor: '#E2E8F0', borderRadius: 8, borderWidth: 1, marginTop: 8, padding: 20 },
   emptyTitle: { color: '#0F172A', fontSize: 16, fontWeight: '900' },
