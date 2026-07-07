@@ -1,0 +1,204 @@
+import { useMemo, useState } from 'react';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import AttachmentTextInput from '../../components/AttachmentTextInput';
+import Info from '../../components/Info';
+import MemoField from '../../components/MemoField';
+import Section from '../../components/Section';
+import { createAfterMemoQuestions, createAfterMemoSuggestion } from '../../logic/afterMemo';
+import { updatePerson } from '../../storage/personStorage';
+import type { Person } from '../../types/person';
+import { homeStyles as styles } from './homeStyles';
+
+export default function AfterMemoPane({
+  people,
+  personId,
+  onPersonUpdated,
+  onLine,
+  onEnd,
+  onOpenPerson,
+  onCoach,
+}: {
+  people: Person[];
+  personId?: string;
+  onPersonUpdated: (person: Person) => void;
+  onLine: () => void;
+  onEnd: () => void;
+  onOpenPerson: (personId?: string) => void;
+  onCoach: (initialPrompt: string) => void;
+}) {
+  const person = useMemo(() => people.find((item) => item.id === personId) ?? people[0], [people, personId]);
+  const questions = useMemo(() => createAfterMemoQuestions(person), [person]);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [talkMemo, setTalkMemo] = useState('');
+  const [allInfoMemo, setAllInfoMemo] = useState('');
+  const [nextTodo, setNextTodo] = useState('');
+  const [aiGenerated, setAiGenerated] = useState(false);
+  const [showAiDetails, setShowAiDetails] = useState(false);
+  const [updatedNotice, setUpdatedNotice] = useState(false);
+
+  const suggestion = useMemo(
+    () =>
+      createAfterMemoSuggestion({
+        person,
+        answers,
+        talkMemo,
+        allInfoMemo,
+        nextTodo,
+      }),
+    [allInfoMemo, answers, nextTodo, person, talkMemo],
+  );
+
+  const setAnswer = (question: string, value: string) => {
+    setAnswers((current) => ({ ...current, [question]: value }));
+  };
+
+  const updatePersonCard = async () => {
+    if (!person) {
+      Alert.alert('人脈カードがありません', '更新対象の人物を選んでください。');
+      return;
+    }
+
+    const answeredQuestions = questions
+      .map((question) => `${question}\n回答：${answers[question] || '未入力'}`)
+      .join('\n\n');
+    const memoLines = [
+      `予定前ナビの質問回答\n${answeredQuestions}`,
+      `話した内容：${talkMemo || '未入力'}`,
+      `得た情報全部：${allInfoMemo || '未入力'}`,
+      `自分が思う次アクション：${nextTodo || '未入力'}`,
+      `AI抽出：${suggestion.accumulation}`,
+      `AIフィードバック：${suggestion.feedback}`,
+    ];
+
+    const saved = await updatePerson({
+      ...person,
+      goal: suggestion.goal,
+      nextAction: suggestion.nextAction,
+      nextQuestion: suggestion.nextQuestion,
+      lineMessage: suggestion.lineMessage,
+      additionalMemo: [person.additionalMemo, memoLines.join('\n')].filter(Boolean).join('\n\n'),
+    });
+    onPersonUpdated(saved);
+    setUpdatedNotice(true);
+    Alert.alert('人脈カードを更新しました', '後メモの内容を人脈カードに蓄積しました。');
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <View style={styles.paneHeaderRow}>
+        <View style={styles.paneHeaderText}>
+          <Text style={styles.paneTitle}>後メモ</Text>
+          <Text style={styles.paneSubcopy}>会話の回答を営業データにして、人脈カードを更新する</Text>
+        </View>
+        <View style={styles.paneHeaderActions}>
+          <Pressable style={styles.smallOutlineButton} onPress={() => onOpenPerson(person?.id)}>
+            <Text style={styles.smallOutlineText}>人脈</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <Section title="予定前ナビから引き継ぎ" subtitle="予定前で決めた質問に、会話後すぐ回答を入れます。">
+        <View style={styles.afterContextCard}>
+          <Text style={styles.afterContextTitle}>{person?.name ?? '人物未選択'}</Text>
+          <Text style={styles.afterContextMeta}>{person ? `${person.industry} / ${person.relationship}` : '人脈カード未選択'}</Text>
+          <Text style={styles.afterContextFocus}>今日の目的：{person?.goal ?? '課題確認と次アクション設定'}</Text>
+        </View>
+      </Section>
+
+      <Section title="質問への回答">
+        {questions.map((question) => (
+          <View key={question} style={styles.questionBlock}>
+            <Text style={styles.questionText}>{question}</Text>
+            <AttachmentTextInput
+              value={answers[question] ?? ''}
+              onChangeText={(value) => setAnswer(question, value)}
+              placeholder="相手の回答をそのまま入力"
+              minHeight={76}
+              compact
+            />
+          </View>
+        ))}
+      </Section>
+
+      <Section title="会話で得た情報を全部入れる" subtitle="分類・温度感・次回タイミングはAIが推論します。ここでは素材を漏らさず残します。">
+        <MemoField label="話した内容" value={talkMemo} onChangeText={setTalkMemo} placeholder="会話全体の流れ、相手が強く話していたこと、印象に残った言葉" large />
+        <MemoField
+          label="得た情報を全部貼る"
+          value={allInfoMemo}
+          onChangeText={setAllInfoMemo}
+          placeholder="課題、背景、周りの人脈、紹介できそうな人、予算感、期限、決裁者、断り理由、温度感、LINEで来た文などを雑に全部"
+          large
+        />
+        <MemoField label="自分が思う次にやること" value={nextTodo} onChangeText={setNextTodo} placeholder="例：3日以内に採用系の情報を送る / 紹介依頼はまだしない / 次回は固定費の話を聞く" />
+
+        <View style={styles.aiExtractHintCard}>
+          <Text style={styles.aiExtractTitle}>AIが抽出する営業データ</Text>
+          <Text style={styles.aiExtractText}>課題 / 背景 / 温度感 / 紹介可能性 / 決裁者 / 期限 / 予算感 / 次アクション / 次回連絡日 / 聞き漏れ / 改善点</Text>
+        </View>
+      </Section>
+
+      <Pressable
+        style={styles.fullPrimaryButton}
+        onPress={() => {
+          setAiGenerated(true);
+          setShowAiDetails(false);
+          setUpdatedNotice(false);
+          Alert.alert('後メモを整理しました', '入力内容から人脈カード更新案を作りました。');
+        }}
+      >
+        <Text style={styles.fullPrimaryText}>AIで整理する</Text>
+      </Pressable>
+
+      {aiGenerated ? (
+        <Section title="AIの人脈カード更新案" subtitle="分類・ゴール・次アクションを、人脈カードへ戻すための案です。">
+          <View style={styles.navSummaryCard}>
+            <Info label="分類更新案" value={suggestion.categoryUpdate} compact />
+            <Info label="ゴール更新案" value={suggestion.goal} compact />
+            <Info label="次アクション" value={suggestion.nextAction} compact />
+            <Info label="次回連絡日" value={suggestion.nextContact} compact />
+          </View>
+
+          <Pressable style={styles.toggleRow} onPress={() => setShowAiDetails((value) => !value)}>
+            <Text style={styles.toggleText}>{showAiDetails ? '更新案の詳細を閉じる' : '更新案の詳細を開く'}</Text>
+          </Pressable>
+
+          {showAiDetails ? (
+            <>
+              <Info label="営業フィードバック" value={suggestion.feedback} />
+              <Info label="次回聞くべき質問" value={suggestion.nextQuestion} />
+              <Info label="LINE文案" value={suggestion.lineMessage} />
+              <Info label="蓄積する情報" value={suggestion.accumulation} />
+            </>
+          ) : null}
+
+          <View style={styles.primaryActionStack}>
+            <Pressable style={styles.primaryCtaWide} onPress={updatePersonCard}>
+              <Text style={styles.primaryCtaText}>人脈カードを更新</Text>
+            </Pressable>
+            <View style={styles.inlineActions}>
+              <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('次回通知を設定しました', `${suggestion.nextContact} に通知する想定です。`)}>
+                <Text style={styles.secondaryCtaText}>次回通知</Text>
+              </Pressable>
+              <Pressable style={styles.secondaryCta} onPress={onLine}>
+                <Text style={styles.secondaryCtaText}>LINE文</Text>
+              </Pressable>
+            </View>
+            <View style={styles.inlineActions}>
+              <Pressable style={styles.secondaryCta} onPress={() => onCoach(`${person?.name ?? 'この人'}との会話後メモから、人脈カード更新と次アクションを相談したいです。`)}>
+                <Text style={styles.secondaryCtaText}>コーチ相談</Text>
+              </Pressable>
+              <Pressable style={styles.secondaryCta} onPress={onEnd}>
+                <Text style={styles.secondaryCtaText}>今日の処理完了</Text>
+              </Pressable>
+            </View>
+          </View>
+          {updatedNotice ? <Text style={styles.successNotice}>人脈カードへ蓄積しました</Text> : null}
+        </Section>
+      ) : (
+        <Section title="AIの人脈カード更新案">
+          <Text style={styles.emptyText}>回答と会話データを入力して、「AIで整理する」を押してください。</Text>
+        </Section>
+      )}
+    </ScrollView>
+  );
+}
