@@ -142,7 +142,13 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
         />
 
         {activeTab === 'home' ? (
-          <HomePane people={activePeople} actions={actions} planUpdated={planUpdated} onOpenPerson={openPerson} />
+          <HomePane
+            people={activePeople}
+            actions={actions}
+            planUpdated={planUpdated}
+            onOpenPerson={openPerson}
+            onPersonUpdated={handlePersonUpdated}
+          />
         ) : activeTab === 'people' ? (
           <PeoplePane
             people={filteredPeople}
@@ -156,6 +162,8 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             onChangeSort={setSortMode}
             onOpenPerson={(person) => openPerson(person.id)}
             onAddPerson={() => navigation.navigate('AddPerson')}
+            onLineCheck={(person) => goToTab('line', person.id)}
+            onPersonUpdated={handlePersonUpdated}
           />
         ) : activeTab === 'pre' ? (
           <PreMeetingPane

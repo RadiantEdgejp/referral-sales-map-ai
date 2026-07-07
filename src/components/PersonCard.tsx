@@ -6,6 +6,8 @@ import { formatDateTime } from '../utils/date';
 type Props = {
   person: Person;
   onPress: () => void;
+  onLinePress: () => void;
+  onNotifyPress: () => void;
 };
 
 const TAG_COLORS: Record<PersonCategory, { background: string; text: string }> = {
@@ -16,7 +18,7 @@ const TAG_COLORS: Record<PersonCategory, { background: string; text: string }> =
   将来候補: { background: '#E5E7EB', text: '#374151' },
 };
 
-export default function PersonCard({ person, onPress }: Props) {
+export default function PersonCard({ person, onPress, onLinePress, onNotifyPress }: Props) {
   const status = getStatusLabel(person);
 
   return (
@@ -68,9 +70,9 @@ export default function PersonCard({ person, onPress }: Props) {
       <View style={styles.footer}>
         <Text style={styles.updated}>最終更新: {formatDateTime(person.createdAt)}</Text>
         <View style={styles.cardActions}>
-          <MiniAction icon="detail" label="詳細" />
-          <MiniAction icon="line" label="LINE文" />
-          <MiniAction icon="notice" label="通知" />
+          <MiniAction icon="detail" label="詳細" onPress={onPress} />
+          <MiniAction icon="line" label="LINE文" onPress={onLinePress} />
+          <MiniAction icon="notice" label="通知" onPress={onNotifyPress} />
         </View>
       </View>
     </Pressable>
@@ -95,14 +97,22 @@ function ScorePill({ label, value }: { label: string; value: number }) {
   );
 }
 
-function MiniAction({ icon, label }: { icon: 'detail' | 'line' | 'notice'; label: string }) {
+function MiniAction({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: 'detail' | 'line' | 'notice';
+  label: string;
+  onPress: () => void;
+}) {
   const Icon = icon === 'detail' ? FileText : icon === 'line' ? Copy : Bell;
 
   return (
-    <View style={styles.miniAction}>
+    <Pressable style={({ pressed }) => [styles.miniAction, pressed && styles.miniActionPressed]} onPress={onPress}>
       <Icon color="#153E75" size={14} />
       <Text style={styles.miniActionText}>{label}</Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -298,6 +308,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 34,
     paddingHorizontal: 10,
+  },
+  miniActionPressed: {
+    opacity: 0.6,
   },
   miniActionText: {
     color: '#153E75',

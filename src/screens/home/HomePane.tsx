@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import Info from '../../components/Info';
 import MiniButton from '../../components/MiniButton';
 import Route from '../../components/Route';
 import Schedule from '../../components/Schedule';
 import Section from '../../components/Section';
+import { applyNextContact, nextContactDate } from '../../logic/nextContact';
 import { dateValue, formatTime, getDueState } from '../../logic/personPriority';
 import type { TodayAction } from '../../logic/todayActions';
 import type { Person } from '../../types/person';
@@ -16,11 +17,13 @@ export default function HomePane({
   actions,
   planUpdated,
   onOpenPerson,
+  onPersonUpdated,
 }: {
   people: Person[];
   actions: TodayAction[];
   planUpdated: boolean;
   onOpenPerson: (personId?: string) => void;
+  onPersonUpdated: (person: Person) => void;
 }) {
   const todaySchedule = useMemo(
     () =>
@@ -34,6 +37,38 @@ export default function HomePane({
     [people],
   );
   const preMeetingPerson = todaySchedule[0];
+
+  const completeAction = async (item: TodayAction) => {
+    const person = people.find((candidate) => candidate.id === item.personId);
+    if (!person) {
+      return;
+    }
+
+    const doneLine = `${formatDateTime(new Date().toISOString())} 優先行動「${item.todayTodo}」を完了`;
+    const { saved, notice } = await applyNextContact(
+      {
+        ...person,
+        additionalMemo: [person.additionalMemo, doneLine].filter(Boolean).join('\n'),
+      },
+      nextContactDate(3),
+    );
+    onPersonUpdated(saved);
+    Alert.alert(
+      '今日の行動を完了にしました',
+      `${notice}\n会話の内容は後メモから入力すると人脈カードに反映されます。`,
+    );
+  };
+
+  const postponeAction = async (item: TodayAction) => {
+    const person = people.find((candidate) => candidate.id === item.personId);
+    if (!person) {
+      return;
+    }
+
+    const { saved, notice } = await applyNextContact(person, nextContactDate(1));
+    onPersonUpdated(saved);
+    Alert.alert('明日に延期しました', notice);
+  };
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -56,9 +91,9 @@ export default function HomePane({
               <Text style={styles.shortReason}>{item.shortReason}</Text>
               <Text style={styles.todoLine}>今日やること：{item.todayTodo}</Text>
               <View style={styles.rowButtons}>
-                <MiniButton label="詳細" />
-                <MiniButton label="完了" />
-                <MiniButton label="延期" />
+                <MiniButton label="詳細" onPress={() => onOpenPerson(item.personId)} />
+                <MiniButton label="完了" onPress={() => completeAction(item)} />
+                <MiniButton label="延期" onPress={() => postponeAction(item)} />
               </View>
             </Pressable>
           ))

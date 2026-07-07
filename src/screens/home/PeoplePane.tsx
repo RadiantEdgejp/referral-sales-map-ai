@@ -1,10 +1,19 @@
-import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { useState } from 'react';
+import { Alert, FlatList, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { Search, UserPlus } from 'lucide-react-native';
 import FilterChip from '../../components/FilterChip';
 import PersonCard from '../../components/PersonCard';
+import { applyNextContact, clearNextContact, nextContactDate } from '../../logic/nextContact';
 import type { SortMode } from '../../logic/personPriority';
 import type { Person, PersonCategory } from '../../types/person';
 import { homeStyles as styles } from './homeStyles';
+
+const NOTIFY_OPTIONS: Array<{ label: string; days: number | null }> = [
+  { label: '明日 9:00', days: 1 },
+  { label: '3日後 9:00', days: 3 },
+  { label: '1週間後 9:00', days: 7 },
+  { label: '通知なし', days: null },
+];
 
 export const CATEGORIES: Array<'すべて' | PersonCategory> = [
   'すべて',
@@ -36,6 +45,8 @@ export default function PeoplePane({
   onChangeSort,
   onOpenPerson,
   onAddPerson,
+  onLineCheck,
+  onPersonUpdated,
 }: {
   people: Person[];
   query: string;
@@ -48,12 +59,43 @@ export default function PeoplePane({
   onChangeSort: (value: SortMode) => void;
   onOpenPerson: (person: Person) => void;
   onAddPerson: () => void;
+  onLineCheck: (person: Person) => void;
+  onPersonUpdated: (person: Person) => void;
 }) {
+  const [notifyPerson, setNotifyPerson] = useState<Person | null>(null);
+
+  const applyNotifyOption = async (days: number | null) => {
+    if (!notifyPerson) {
+      return;
+    }
+
+    setNotifyPerson(null);
+
+    if (days === null) {
+      const saved = await clearNextContact(notifyPerson);
+      onPersonUpdated(saved);
+      Alert.alert('通知なしにしました', '次回連絡通知は設定されていません。');
+      return;
+    }
+
+    const { saved, notice } = await applyNextContact(notifyPerson, nextContactDate(days));
+    onPersonUpdated(saved);
+    Alert.alert('通知を設定しました', notice);
+  };
+
   return (
+    <>
     <FlatList
       data={people}
       keyExtractor={(item) => item.id}
-      renderItem={({ item }) => <PersonCard person={item} onPress={() => onOpenPerson(item)} />}
+      renderItem={({ item }) => (
+        <PersonCard
+          person={item}
+          onPress={() => onOpenPerson(item)}
+          onLinePress={() => onLineCheck(item)}
+          onNotifyPress={() => setNotifyPerson(item)}
+        />
+      )}
       ListHeaderComponent={
         <>
           <View style={styles.searchBox}>
@@ -115,5 +157,32 @@ export default function PeoplePane({
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     />
+
+    <Modal
+      visible={notifyPerson !== null}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setNotifyPerson(null)}
+    >
+      <View style={styles.sheetBackdrop}>
+        <View style={styles.personPickerSheet}>
+          <View style={styles.sheetHeader}>
+            <View>
+              <Text style={styles.sheetTitle}>{notifyPerson?.name ?? ''}への次回通知</Text>
+              <Text style={styles.sheetSubcopy}>次回連絡日と通知タイミングを設定します。</Text>
+            </View>
+            <Pressable style={styles.sheetCloseButton} onPress={() => setNotifyPerson(null)}>
+              <Text style={styles.sheetCloseText}>閉じる</Text>
+            </Pressable>
+          </View>
+          {NOTIFY_OPTIONS.map((option) => (
+            <Pressable key={option.label} style={styles.personSelectCard} onPress={() => applyNotifyOption(option.days)}>
+              <Text style={styles.personSelectName}>{option.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 }

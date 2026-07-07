@@ -1,10 +1,10 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
 
-export default function MiniButton({ label }: { label: string }) {
+export default function MiniButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
-    <View style={styles.rowButton}>
+    <Pressable style={({ pressed }) => [styles.rowButton, pressed && styles.pressed]} onPress={onPress}>
       <Text style={styles.rowButtonText}>{label}</Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -18,6 +18,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     minHeight: 34,
+  },
+  pressed: {
+    backgroundColor: '#EAF2FF',
   },
   rowButtonText: { color: '#153E75', fontSize: 12, fontWeight: '900' },
 });
