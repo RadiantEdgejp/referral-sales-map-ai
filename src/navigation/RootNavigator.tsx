@@ -2,7 +2,9 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { LogOut } from 'lucide-react-native';
+import { LogOut, Settings as SettingsIcon } from 'lucide-react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthContext';
 import AddPersonScreen from '../screens/AddPersonScreen';
 import AfterMemoScreen from '../screens/AfterMemoScreen';
@@ -12,6 +14,8 @@ import HomeScreen from '../screens/HomeScreen';
 import LineCheckScreen from '../screens/LineCheckScreen';
 import PersonDetailScreen from '../screens/PersonDetailScreen';
 import PreMeetingNavScreen from '../screens/PreMeetingNavScreen';
+import SettingsScreen from '../screens/SettingsScreen';
+import LegalDocumentScreen from '../screens/legal/LegalDocumentScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
 import ResetPasswordScreen from '../screens/auth/ResetPasswordScreen';
 import SignUpScreen from '../screens/auth/SignUpScreen';
@@ -27,6 +31,21 @@ const screenOptions = {
   headerShadowVisible: false,
   contentStyle: { backgroundColor: '#F8FAFC' },
 } as const;
+
+/** Header settings button shown on Home (Issue #14: settings / legal pages). */
+function SettingsButton() {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  return (
+    <Pressable
+      onPress={() => navigation.navigate('Settings')}
+      style={logoutStyles.button}
+      testID="settings-button"
+      accessibilityLabel="設定"
+    >
+      <SettingsIcon color="#153E75" size={16} />
+    </Pressable>
+  );
+}
 
 /** Header logout button shown on Home (Issue #10: logout feature). */
 function LogoutButton() {
@@ -88,7 +107,15 @@ export default function RootNavigator() {
           <Stack.Screen
             name="Home"
             component={HomeScreen}
-            options={{ title: '紹介営業マップAI', headerRight: () => <LogoutButton /> }}
+            options={{
+              title: '紹介営業マップAI',
+              headerRight: () => (
+                <View style={logoutStyles.headerRight}>
+                  <SettingsButton />
+                  <LogoutButton />
+                </View>
+              ),
+            }}
           />
           <Stack.Screen name="AddPerson" component={AddPersonScreen} options={{ title: '人物追加' }} />
           <Stack.Screen name="PersonDetail" component={PersonDetailScreen} options={{ title: '人物詳細' }} />
@@ -97,6 +124,8 @@ export default function RootNavigator() {
           <Stack.Screen name="LineCheck" component={LineCheckScreen} options={{ title: 'LINEチェック' }} />
           <Stack.Screen name="EndOfDayCheck" component={EndOfDayCheckScreen} options={{ title: '終業後チェック' }} />
           <Stack.Screen name="CoachChat" component={CoachChatScreen} options={{ title: '営業コーチ' }} />
+          <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: '設定' }} />
+          <Stack.Screen name="LegalDoc" component={LegalDocumentScreen} options={{ title: '規約・ポリシー' }} />
         </Stack.Navigator>
       ) : (
         <AuthStack.Navigator screenOptions={screenOptions}>
@@ -106,6 +135,11 @@ export default function RootNavigator() {
             name="ResetPassword"
             component={ResetPasswordScreen}
             options={{ title: 'パスワードリセット' }}
+          />
+          <AuthStack.Screen
+            name="LegalDoc"
+            component={LegalDocumentScreen}
+            options={{ title: '規約・ポリシー' }}
           />
         </AuthStack.Navigator>
       )}
@@ -119,6 +153,11 @@ const logoutStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F8FAFC',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   button: {
     flexDirection: 'row',

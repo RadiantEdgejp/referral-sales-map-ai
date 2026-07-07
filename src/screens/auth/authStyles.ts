@@ -84,6 +84,38 @@ export const authStyles = StyleSheet.create({
   disabled: {
     opacity: 0.5,
   },
+  consentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginTop: 20,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  checkboxChecked: {
+    backgroundColor: '#153E75',
+    borderColor: '#153E75',
+  },
+  consentText: {
+    flex: 1,
+    color: '#334155',
+    fontWeight: '700',
+    lineHeight: 21,
+  },
+  consentLink: {
+    color: '#153E75',
+    fontWeight: '900',
+    textDecorationLine: 'underline',
+  },
   linkRow: {
     marginTop: 20,
     gap: 12,

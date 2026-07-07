@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { MailCheck, UserPlus } from 'lucide-react-native';
+import { Check, MailCheck, UserPlus } from 'lucide-react-native';
 import { toAuthErrorMessage } from '../../auth/authErrors';
 import { supabase } from '../../lib/supabaseClient';
 import type { AuthScreenProps } from '../../types/navigation';
@@ -19,6 +19,7 @@ export default function SignUpScreen({ navigation }: AuthScreenProps<'SignUp'>) 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
@@ -34,6 +35,11 @@ export default function SignUpScreen({ navigation }: AuthScreenProps<'SignUp'>) 
     }
     if (password !== passwordConfirm) {
       setError('パスワード（確認）が一致しません。');
+      return;
+    }
+    if (!agreed) {
+      // Issue #14: 利用規約・プライバシーポリシーへの同意なしでは登録できない。
+      setError('利用規約・プライバシーポリシーに同意してください。');
       return;
     }
 
@@ -131,6 +137,46 @@ export default function SignUpScreen({ navigation }: AuthScreenProps<'SignUp'>) 
           autoComplete="new-password"
           testID="signup-password-confirm"
         />
+
+        {/* Issue #14: 利用規約・プライバシーポリシーへの同意チェック */}
+        <View style={styles.consentRow}>
+          <Pressable
+            style={[styles.checkbox, agreed && styles.checkboxChecked]}
+            onPress={() => setAgreed((prev) => !prev)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: agreed }}
+            accessibilityLabel="利用規約・プライバシーポリシーに同意する"
+            testID="signup-agree-checkbox"
+          >
+            {agreed ? <Check color="#FFFFFF" size={14} strokeWidth={3.5} /> : null}
+          </Pressable>
+          <Text style={styles.consentText}>
+            <Text
+              style={styles.consentLink}
+              onPress={() => navigation.navigate('LegalDoc', { doc: 'terms' })}
+              testID="signup-link-terms"
+            >
+              利用規約
+            </Text>
+            ・
+            <Text
+              style={styles.consentLink}
+              onPress={() => navigation.navigate('LegalDoc', { doc: 'privacy' })}
+              testID="signup-link-privacy"
+            >
+              プライバシーポリシー
+            </Text>
+            に同意する（
+            <Text
+              style={styles.consentLink}
+              onPress={() => navigation.navigate('LegalDoc', { doc: 'aiNotice' })}
+              testID="signup-link-ai-notice"
+            >
+              AI利用上の注意
+            </Text>
+            もご確認ください）
+          </Text>
+        </View>
 
         {error ? (
           <View style={styles.errorBox}>
