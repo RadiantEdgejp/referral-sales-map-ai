@@ -58,7 +58,7 @@ const CONTACT_COLUMNS =
   'recommended_next_contact_at,notes,additional_memo,next_contact_date,notification_id,' +
   'archived_at,created_at,updated_at';
 
-async function requireUserId(): Promise<string> {
+export async function requireUserId(): Promise<string> {
   const { data, error } = await supabase.auth.getSession();
   if (error) {
     throw new Error(`セッションの取得に失敗しました: ${error.message}`);
@@ -70,9 +70,16 @@ async function requireUserId(): Promise<string> {
   return userId;
 }
 
-function toRowId(userId: string, personId: string): string {
+/**
+ * `contacts.id`（およびそれを参照する各テーブルの `contact_id`）は
+ * `<user_id>:<client_id>` 形式で名前空間化されている。contacts に紐づく行を
+ * 書き込む他のストレージモジュールも、この関数で同じ行IDを導出すること。
+ */
+export function toContactRowId(userId: string, personId: string): string {
   return `${userId}:${personId}`;
 }
+
+const toRowId = toContactRowId;
 
 function fromRowId(userId: string, rowId: string): string {
   const prefix = `${userId}:`;

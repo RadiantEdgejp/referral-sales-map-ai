@@ -15,14 +15,21 @@ import { getLlmAdapter, toLlmErrorMessage } from '../ai/llmAdapter';
 import AnalysisPreview from '../components/AnalysisPreview';
 import AttachmentTextInput from '../components/AttachmentTextInput';
 import { SAMPLE_PERSON_MEMO } from '../data/sampleInput';
+import { buildAutoFollowUpPlan, hasValidNextContact } from '../logic/autoFollowUp';
+import {
+  cancelContactNotification,
+  scheduleContactNotification,
+} from '../notifications/notificationService';
+import { createAutoFollowUp } from '../storage/followUpStorage';
 import { addPerson } from '../storage/personStorage';
 import type { ScreenProps } from '../types/navigation';
-import type { PersonAnalysis } from '../types/person';
+import type { Person, PersonAnalysis } from '../types/person';
 
 export default function AddPersonScreen({ navigation }: ScreenProps<'AddPerson'>) {
   const [memo, setMemo] = useState('');
   const [analysis, setAnalysis] = useState<PersonAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
   const fillSample = () => {
@@ -58,17 +65,63 @@ export default function AddPersonScreen({ navigation }: ScreenProps<'AddPerson'>
       Alert.alert('分析結果がありません', '先に「AIで整理する」を押してください。');
       return;
     }
+    if (saving) return;
 
-    await addPerson({
+    // 次回連絡日はユーザーがこの画面で入力しない（AIの推奨日時は
+    // recommendedNextContactAt として別途保持される）ため、未入力として扱い、
+    // 初期ルール「3日後 9:00」を適用する（Issue #16 / CLAUDE.md 5.1）。
+    let person: Person = {
       id: `${Date.now()}`,
       rawMemo: memo,
       createdAt: new Date().toISOString(),
-      nextContactAt: analysis.recommendedNextContactAt,
       ...analysis,
-    });
+    };
 
-    Alert.alert('保存しました', '人脈カード一覧に追加しました。');
-    navigation.goBack();
+    const plan = hasValidNextContact(person.nextContactAt) ? null : buildAutoFollowUpPlan();
+    if (plan) {
+      person = { ...person, nextContactAt: plan.dueDate.toISOString() };
+    }
+
+    setSaving(true);
+    try {
+      // ローカル通知は任意連携（失敗しても保存は続行する）
+      let notificationId: string | undefined;
+      if (plan) {
+        try {
+          notificationId = await scheduleContactNotification(person, plan.dueDate);
+        } catch {
+          notificationId = undefined;
+        }
+      }
+      person = { ...person, notificationId };
+
+      try {
+        await addPerson(person);
+      } catch (error) {
+        // 人物本体の保存に失敗したら、先行スケジュールした通知を取り消す
+        await cancelContactNotification(notificationId);
+        throw error;
+      }
+
+      let followUpNotice = '人脈カード一覧に追加しました。';
+      if (plan) {
+        try {
+          await createAutoFollowUp({ person, dueDate: plan.dueDate, reason: plan.reason });
+          followUpNotice = plan.reason;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          followUpNotice = `人脈カードは保存しましたが、フォローアップの自動作成に失敗しました。人物詳細から次回連絡日を確認してください。\n（${message}）`;
+        }
+      }
+
+      Alert.alert('保存しました', followUpNotice);
+      navigation.goBack();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      Alert.alert('保存に失敗しました', message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -120,9 +173,13 @@ export default function AddPersonScreen({ navigation }: ScreenProps<'AddPerson'>
           </View>
         )}
 
-        <Pressable style={[styles.saveButton, !analysis && styles.disabled]} onPress={save}>
-          <Save color="#FFFFFF" size={20} />
-          <Text style={styles.saveText}>保存する</Text>
+        <Pressable
+          style={[styles.saveButton, (!analysis || saving) && styles.disabled]}
+          onPress={save}
+          disabled={saving}
+        >
+          {saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Save color="#FFFFFF" size={20} />}
+          <Text style={styles.saveText}>{saving ? '保存中...' : '保存する'}</Text>
         </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
