@@ -5,10 +5,10 @@ import { Search } from 'lucide-react-native';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
 import FilterChip from '../../components/FilterChip';
 import Info from '../../components/Info';
-import Route from '../../components/Route';
 import Section from '../../components/Section';
 import { dedupePeople } from '../../logic/personPriority';
 import { createPreMeetingNavigation, getActionGuidance } from '../../logic/preMeetingNav';
+import { updatePerson } from '../../storage/personStorage';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
 import { homeStyles as styles } from './homeStyles';
@@ -18,13 +18,17 @@ export default function PreMeetingPane({
   initialPersonId,
   onAfter,
   onLine,
+  onPersonUpdated,
+  onAddPerson,
   onOpenPerson,
   onOpenCoach,
 }: {
   people: Person[];
   initialPersonId?: string;
-  onAfter: () => void;
-  onLine: () => void;
+  onAfter: (personId?: string) => void;
+  onLine: (personId?: string) => void;
+  onPersonUpdated: (person: Person) => void;
+  onAddPerson: () => void;
   onOpenPerson: (personId?: string) => void;
   onOpenCoach: (initialPrompt: string) => void;
 }) {
@@ -68,8 +72,30 @@ export default function PreMeetingPane({
   };
 
   const goAfterMemo = () => {
-    Alert.alert('後メモへ引き継ぎます', '相手・目的・質問・記録項目を後メモに渡す想定のUIです。');
-    onAfter();
+    onAfter(currentPersonId);
+  };
+
+  const saveNavToPersonCard = async () => {
+    if (!selectedPerson) {
+      return;
+    }
+
+    const memoLines = [
+      `予定前ナビ（${actionType}）`,
+      `今日の目的：${nav.purpose}`,
+      `今日の到達点：${nav.destination}`,
+      `聞くべき質問：\n${nav.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}`,
+      `NG行動：\n${nav.ngActions.map((item) => `・${item}`).join('\n')}`,
+      `会話後に記録する項目：\n${nav.recordItems.map((item) => `・${item}`).join('\n')}`,
+      memo.trim() ? `当日の追加メモ：${memo.trim()}` : '',
+    ].filter(Boolean);
+
+    const saved = await updatePerson({
+      ...selectedPerson,
+      additionalMemo: [selectedPerson.additionalMemo, memoLines.join('\n')].filter(Boolean).join('\n\n'),
+    });
+    onPersonUpdated(saved);
+    Alert.alert('予定前ナビを保存しました', `${selectedPerson.name}の人脈カードのメモに蓄積しました。`);
   };
 
   if (people.length === 0) {
@@ -78,9 +104,9 @@ export default function PreMeetingPane({
         <Section title="予定前ナビ" subtitle="会う前に、今日の目的と聞くべき質問を決める">
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>まだ相手が選ばれていません。</Text>
-            <Text style={styles.emptyText}>今日会う人、連絡する人、LINEする人を選んでください。</Text>
-            <Pressable style={styles.emptyButton} onPress={() => Alert.alert('人脈カードから選ぶ', '人脈カード一覧から相手を選ぶ想定です。')}>
-              <Text style={styles.emptyButtonText}>人脈カードから選ぶ</Text>
+            <Text style={styles.emptyText}>先に人脈カードを追加すると、その相手の予定前ナビを作れます。</Text>
+            <Pressable style={styles.emptyButton} onPress={onAddPerson}>
+              <Text style={styles.emptyButtonText}>人物を追加する</Text>
             </Pressable>
           </View>
         </Section>
@@ -98,9 +124,6 @@ export default function PreMeetingPane({
         <View style={styles.paneHeaderActions}>
           <Pressable style={styles.smallOutlineButton} onPress={() => onOpenPerson(currentPersonId)}>
             <Text style={styles.smallOutlineText}>人脈</Text>
-          </Pressable>
-          <Pressable style={styles.smallOutlineButton} onPress={() => Alert.alert('履歴', '過去の予定前ナビへ移動する想定です。')}>
-            <Text style={styles.smallOutlineText}>履歴</Text>
           </Pressable>
         </View>
       </View>
@@ -242,9 +265,6 @@ export default function PreMeetingPane({
           <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(currentPersonId)}>
             <Text style={styles.secondaryCtaText}>人脈カードを開く</Text>
           </Pressable>
-          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('参照情報を編集', '人脈カードの基本情報編集へ進む想定です。')}>
-            <Text style={styles.secondaryCtaText}>参照情報を編集</Text>
-          </Pressable>
         </View>
       </Section>
 
@@ -324,13 +344,13 @@ export default function PreMeetingPane({
               <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(currentPersonId)}>
                 <Text style={styles.secondaryCtaText}>人脈カード</Text>
               </Pressable>
-              <Pressable style={styles.secondaryCta} onPress={onLine}>
+              <Pressable style={styles.secondaryCta} onPress={() => onLine(currentPersonId)}>
                 <Text style={styles.secondaryCtaText}>LINE文を作る</Text>
               </Pressable>
               <Pressable style={styles.secondaryCta} onPress={() => onOpenCoach(nav.coachPrompt)}>
                 <Text style={styles.secondaryCtaText}>コーチ相談</Text>
               </Pressable>
-              <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('予定前ナビを保存しました', '人脈カードの予定前ナビ履歴に保存する想定です。')}>
+              <Pressable style={styles.secondaryCta} onPress={saveNavToPersonCard}>
                 <Text style={styles.secondaryCtaText}>ナビを保存</Text>
               </Pressable>
             </View>
@@ -342,19 +362,6 @@ export default function PreMeetingPane({
           <Text style={styles.emptyText}>相手・アクション種別・追加メモを確認して、「今日のナビを作る」を押してください。</Text>
         </Section>
       )}
-
-      <Section title="過去の予定前ナビ">
-        <Route title="6月18日 / 田中さん / 情報交換前" meta="目的：美容業界の採用・集客課題を聞く / 状態：後メモ未入力" />
-        <Route title="6月17日 / 山本さん / 初回連絡前" meta="目的：整体院の経営課題を確認 / 状態：後メモ入力済み" />
-        <View style={styles.inlineActions}>
-          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('履歴を見る', '予定前ナビ履歴一覧を開く想定です。')}>
-            <Text style={styles.secondaryCtaText}>履歴を見る</Text>
-          </Pressable>
-          <Pressable style={styles.secondaryCta} onPress={onAfter}>
-            <Text style={styles.secondaryCtaText}>後メモを入力</Text>
-          </Pressable>
-        </View>
-      </Section>
     </ScrollView>
   );
 }

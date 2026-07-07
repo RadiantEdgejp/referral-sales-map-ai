@@ -5,9 +5,17 @@ import Info from '../../components/Info';
 import MemoField from '../../components/MemoField';
 import Section from '../../components/Section';
 import { createAfterMemoQuestions, createAfterMemoSuggestion } from '../../logic/afterMemo';
+import { scheduleContactNotification } from '../../notifications/notificationService';
 import { updatePerson } from '../../storage/personStorage';
 import type { Person } from '../../types/person';
+import { formatDateTime } from '../../utils/date';
 import { homeStyles as styles } from './homeStyles';
+
+function timingLabelToDays(label: string) {
+  if (label.includes('明日')) return 1;
+  if (label.includes('1週間')) return 7;
+  return 3;
+}
 
 export default function AfterMemoPane({
   people,
@@ -21,7 +29,7 @@ export default function AfterMemoPane({
   people: Person[];
   personId?: string;
   onPersonUpdated: (person: Person) => void;
-  onLine: () => void;
+  onLine: (personId?: string) => void;
   onEnd: () => void;
   onOpenPerson: (personId?: string) => void;
   onCoach: (initialPrompt: string) => void;
@@ -81,6 +89,33 @@ export default function AfterMemoPane({
     onPersonUpdated(saved);
     setUpdatedNotice(true);
     Alert.alert('人脈カードを更新しました', '後メモの内容を人脈カードに蓄積しました。');
+  };
+
+  const scheduleNextContact = async () => {
+    if (!person) {
+      Alert.alert('人脈カードがありません', '通知を設定する人物を選んでください。');
+      return;
+    }
+
+    const date = new Date();
+    date.setDate(date.getDate() + timingLabelToDays(suggestion.nextContact));
+    date.setHours(9, 0, 0, 0);
+
+    let notificationId = person.notificationId;
+    let notice = `${formatDateTime(date.toISOString())} に${person.name}への連絡通知を設定しました。`;
+    try {
+      notificationId = await scheduleContactNotification(person, date);
+    } catch {
+      notice = `次回連絡日を ${formatDateTime(date.toISOString())} に設定しました（通知は設定できませんでした）。`;
+    }
+
+    const saved = await updatePerson({
+      ...person,
+      nextContactAt: date.toISOString(),
+      notificationId,
+    });
+    onPersonUpdated(saved);
+    Alert.alert('次回通知を設定しました', notice);
   };
 
   return (
@@ -176,10 +211,10 @@ export default function AfterMemoPane({
               <Text style={styles.primaryCtaText}>人脈カードを更新</Text>
             </Pressable>
             <View style={styles.inlineActions}>
-              <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('次回通知を設定しました', `${suggestion.nextContact} に通知する想定です。`)}>
+              <Pressable style={styles.secondaryCta} onPress={scheduleNextContact}>
                 <Text style={styles.secondaryCtaText}>次回通知</Text>
               </Pressable>
-              <Pressable style={styles.secondaryCta} onPress={onLine}>
+              <Pressable style={styles.secondaryCta} onPress={() => onLine(person?.id)}>
                 <Text style={styles.secondaryCtaText}>LINE文</Text>
               </Pressable>
             </View>

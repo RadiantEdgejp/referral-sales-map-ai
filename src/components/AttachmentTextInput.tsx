@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { Image as ImageIcon, Mic, MoreHorizontal, Paperclip } from 'lucide-react-native';
+import { ClipboardPaste, MoreHorizontal } from 'lucide-react-native';
 
 type Props = {
   value?: string;
@@ -37,10 +37,6 @@ export default function AttachmentTextInput({
     setMenuOpen(false);
   };
 
-  const alertFuture = (title: string, body: string) => {
-    Alert.alert(title, `${body}。初期UIでは見た目だけです。`);
-  };
-
   return (
     <View>
       <TextInput
@@ -54,26 +50,8 @@ export default function AttachmentTextInput({
       />
 
       <View style={styles.toolRow}>
-        <Pressable
-          accessibilityLabel="ファイル添付"
-          style={styles.toolButton}
-          onPress={() => alertFuture('ファイル添付', 'PDFや資料を添付する想定です')}
-        >
-          <Paperclip color="#0F172A" size={20} />
-        </Pressable>
-        <Pressable
-          accessibilityLabel="画像添付"
-          style={styles.toolButton}
-          onPress={() => alertFuture('画像添付', 'スクショや画像を読み取る想定です')}
-        >
-          <ImageIcon color="#0F172A" size={20} />
-        </Pressable>
-        <Pressable
-          accessibilityLabel="音声入力"
-          style={styles.toolButton}
-          onPress={() => alertFuture('音声入力', '音声メモを入力する想定です')}
-        >
-          <Mic color="#0F172A" size={20} />
+        <Pressable accessibilityLabel="クリップボードから貼り付け" style={styles.toolButton} onPress={pasteClipboard}>
+          <ClipboardPaste color="#0F172A" size={20} />
         </Pressable>
         <Pressable accessibilityLabel="その他" style={styles.toolButton} onPress={() => setMenuOpen(true)}>
           <MoreHorizontal color="#0F172A" size={22} />
@@ -86,16 +64,13 @@ export default function AttachmentTextInput({
             <View style={styles.sheetHeader}>
               <View>
                 <Text style={styles.sheetTitle}>入力方法を選ぶ</Text>
-                <Text style={styles.sheetSubcopy}>ファイル、画像、音声、貼り付けを使えます。</Text>
+                <Text style={styles.sheetSubcopy}>貼り付けとクリアを使えます。</Text>
               </View>
               <Pressable style={styles.closeButton} onPress={() => setMenuOpen(false)}>
                 <Text style={styles.closeText}>閉じる</Text>
               </Pressable>
             </View>
 
-            <SheetItem title="ファイル添付" body="PDFや資料を入力に使う想定です。" onPress={() => alertFuture('ファイル添付', 'PDFや資料を添付する想定です')} />
-            <SheetItem title="画像添付" body="LINEスクショやDMスクショを読み取る想定です。" onPress={() => alertFuture('画像添付', 'スクショや画像を読み取る想定です')} />
-            <SheetItem title="音声入力" body="移動中のメモを音声で入れる想定です。" onPress={() => alertFuture('音声入力', '音声メモを入力する想定です')} />
             <SheetItem title="クリップボードから貼り付け" body="コピー済みの文面を入力欄へ追加します。" onPress={pasteClipboard} />
             <SheetItem
               title="入力をクリア"

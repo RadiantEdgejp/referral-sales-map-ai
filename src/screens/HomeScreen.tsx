@@ -8,7 +8,6 @@ import {
   House,
   MessageSquareText,
   Moon,
-  Plus,
   UsersRound,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -49,6 +48,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
   const [industry, setIndustry] = useState('すべて');
   const [sortMode, setSortMode] = useState<SortMode>('priority');
   const [planUpdated, setPlanUpdated] = useState(false);
+  const [focusPersonId, setFocusPersonId] = useState<string | undefined>(undefined);
 
   const loadPeople = useCallback(async () => {
     const stored = await getPeople();
@@ -110,6 +110,13 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
     }
   };
 
+  const goToTab = (tab: MainTab, personId?: string) => {
+    if (personId) {
+      setFocusPersonId(personId);
+    }
+    setActiveTab(tab);
+  };
+
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
@@ -153,18 +160,20 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
         ) : activeTab === 'pre' ? (
           <PreMeetingPane
             people={activePeople}
-            initialPersonId={actions[0]?.personId}
-            onAfter={() => setActiveTab('after')}
-            onLine={() => setActiveTab('line')}
+            initialPersonId={focusPersonId ?? actions[0]?.personId}
+            onAfter={(personId) => goToTab('after', personId)}
+            onLine={(personId) => goToTab('line', personId)}
+            onPersonUpdated={handlePersonUpdated}
+            onAddPerson={() => navigation.navigate('AddPerson')}
             onOpenPerson={openPerson}
             onOpenCoach={(initialPrompt) => navigation.navigate('CoachChat', { initialPrompt })}
           />
         ) : activeTab === 'after' ? (
           <AfterMemoPane
             people={activePeople}
-            personId={actions[0]?.personId}
+            personId={focusPersonId ?? actions[0]?.personId}
             onPersonUpdated={handlePersonUpdated}
-            onLine={() => setActiveTab('line')}
+            onLine={(personId) => goToTab('line', personId)}
             onEnd={() => setActiveTab('end')}
             onOpenPerson={openPerson}
             onCoach={(initialPrompt) => navigation.navigate('CoachChat', { initialPrompt })}
@@ -172,9 +181,9 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
         ) : activeTab === 'line' ? (
           <LineCheckPane
             people={activePeople}
-            personId={actions[0]?.personId}
+            personId={focusPersonId ?? actions[0]?.personId}
             onPersonUpdated={handlePersonUpdated}
-            onAfter={() => setActiveTab('after')}
+            onAfter={(personId) => goToTab('after', personId)}
             onOpenPerson={openPerson}
             onCoach={(initialPrompt) => navigation.navigate('CoachChat', { initialPrompt })}
           />
@@ -207,10 +216,6 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             >
               <Bot color="#153E75" size={20} />
               <Text style={styles.coachButtonText}>営業コーチ</Text>
-            </Pressable>
-            <Pressable style={[styles.floatingButton, styles.addButton]} onPress={() => Alert.alert('今日やることを追加', 'モック追加モーダルの想定です。')}>
-              <Plus color="#FFFFFF" size={20} />
-              <Text style={styles.addButtonText}>今日やること追加</Text>
             </Pressable>
           </View>
         ) : null}

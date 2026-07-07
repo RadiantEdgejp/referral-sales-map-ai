@@ -473,7 +473,5 @@ export const homeStyles = StyleSheet.create({
     minHeight: 52,
   },
   coachButton: { backgroundColor: '#EAF2FF', borderColor: '#B8D4FF', borderWidth: 1 },
-  addButton: { backgroundColor: '#153E75' },
   coachButtonText: { color: '#153E75', fontWeight: '900' },
-  addButtonText: { color: '#FFFFFF', fontWeight: '900', fontSize: 13 },
 });

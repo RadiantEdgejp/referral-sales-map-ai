@@ -4,7 +4,6 @@ import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
 import FilterChip from '../../components/FilterChip';
-import Route from '../../components/Route';
 import Section from '../../components/Section';
 import {
   LINE_CHECK_TYPES,
@@ -18,8 +17,10 @@ import {
   type LinePersonFilter,
 } from '../../logic/lineCheck';
 import { dedupePeople } from '../../logic/personPriority';
+import { cancelContactNotification, scheduleContactNotification } from '../../notifications/notificationService';
 import { updatePerson } from '../../storage/personStorage';
 import type { Person } from '../../types/person';
+import { formatDateTime } from '../../utils/date';
 import { homeStyles as styles } from './homeStyles';
 
 export default function LineCheckPane({
@@ -33,7 +34,7 @@ export default function LineCheckPane({
   people: Person[];
   personId?: string;
   onPersonUpdated: (person: Person) => void;
-  onAfter: () => void;
+  onAfter: (personId?: string) => void;
   onOpenPerson: (personId?: string) => void;
   onCoach: (initialPrompt: string) => void;
 }) {
@@ -127,8 +128,48 @@ export default function LineCheckPane({
   };
 
   const sendToAfterMemo = () => {
-    Alert.alert('後メモに送ります', '相手・入力文・抽出情報・温度感・次の質問・返信文案・次アクションを後メモに引き継ぐ想定です。');
-    onAfter();
+    onAfter(selectedPerson?.id);
+  };
+
+  const applyLineReminder = async (option: string) => {
+    if (!selectedPerson) {
+      setNotificationOpen(false);
+      return;
+    }
+
+    setNotificationOpen(false);
+
+    if (option === '通知なし') {
+      await cancelContactNotification(selectedPerson.notificationId);
+      const saved = await updatePerson({
+        ...selectedPerson,
+        notificationId: undefined,
+      });
+      onPersonUpdated(saved);
+      Alert.alert('通知なしにしました', '次回連絡通知は設定されていません。');
+      return;
+    }
+
+    const days = option.includes('明日') ? 1 : option.includes('1週間') ? 7 : 3;
+    const date = new Date();
+    date.setDate(date.getDate() + days);
+    date.setHours(9, 0, 0, 0);
+
+    let notificationId = selectedPerson.notificationId;
+    let notice = `${formatDateTime(date.toISOString())} に${selectedPerson.name}への連絡通知を設定しました。`;
+    try {
+      notificationId = await scheduleContactNotification(selectedPerson, date);
+    } catch {
+      notice = `次回連絡日を ${formatDateTime(date.toISOString())} に設定しました（通知は設定できませんでした）。`;
+    }
+
+    const saved = await updatePerson({
+      ...selectedPerson,
+      nextContactAt: date.toISOString(),
+      notificationId,
+    });
+    onPersonUpdated(saved);
+    Alert.alert('通知を設定しました', notice);
   };
 
   if (people.length === 0) {
@@ -155,13 +196,10 @@ export default function LineCheckPane({
           <Pressable style={styles.smallOutlineButton} onPress={() => onOpenPerson(selectedPerson?.id)}>
             <Text style={styles.smallOutlineText}>人脈</Text>
           </Pressable>
-          <Pressable style={styles.smallOutlineButton} onPress={() => Alert.alert('履歴', '過去の文面チェック履歴を開く想定です。')}>
-            <Text style={styles.smallOutlineText}>履歴</Text>
-          </Pressable>
         </View>
       </View>
 
-      <Section title="相手を選ぶ" subtitle="ホーム・人脈カード・後メモから開いた場合は、この相手が自動選択される想定です。">
+      <Section title="相手を選ぶ" subtitle="他の画面から開いた場合は、その相手が選択されています。違う場合は検索で変更してください。">
         {selectedPerson ? (
           <View style={styles.selectedPersonSummary}>
             <Text style={styles.selectedSummaryLabel}>選択中</Text>
@@ -287,7 +325,7 @@ export default function LineCheckPane({
           <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(selectedPerson?.id)}>
             <Text style={styles.secondaryCtaText}>人脈カードを見る</Text>
           </Pressable>
-          <Pressable style={styles.secondaryCta} onPress={onAfter}>
+          <Pressable style={styles.secondaryCta} onPress={() => onAfter(selectedPerson?.id)}>
             <Text style={styles.secondaryCtaText}>後メモを見る</Text>
           </Pressable>
         </View>
@@ -349,19 +387,6 @@ export default function LineCheckPane({
         </Section>
       )}
 
-      <Section title="文面チェック履歴">
-        <Route title="6月19日 / 山本さん / 受信文チェック" meta="要約：リピート率が課題という返信 / 状態：人脈カード保存済み / 次アクション：周辺経営者にも同じ課題があるか聞く" />
-        <Route title="6月18日 / 田中さん / 紹介依頼文" meta="要約：美容業界の経営者を紹介してほしい相談 / 状態：未保存 / 次アクション：紹介依頼は延期して情報交換を優先" />
-        <View style={styles.inlineActions}>
-          <Pressable style={styles.secondaryCta} onPress={() => Alert.alert('履歴詳細', '文面チェック履歴の詳細を開く想定です。')}>
-            <Text style={styles.secondaryCtaText}>詳細を見る</Text>
-          </Pressable>
-          <Pressable style={styles.secondaryCta} onPress={() => onOpenPerson(selectedPerson?.id)}>
-            <Text style={styles.secondaryCtaText}>人脈カードを見る</Text>
-          </Pressable>
-        </View>
-      </Section>
-
       <Modal visible={notificationOpen} transparent animationType="fade" onRequestClose={() => setNotificationOpen(false)}>
         <View style={styles.sheetBackdrop}>
           <View style={styles.personPickerSheet}>
@@ -375,14 +400,7 @@ export default function LineCheckPane({
               </Pressable>
             </View>
             {LINE_NOTICE_OPTIONS.map((option) => (
-              <Pressable
-                key={option}
-                style={styles.personSelectCard}
-                onPress={() => {
-                  setNotificationOpen(false);
-                  Alert.alert('通知を設定しました', `${option} に通知する想定です。`);
-                }}
-              >
+              <Pressable key={option} style={styles.personSelectCard} onPress={() => applyLineReminder(option)}>
                 <Text style={styles.personSelectName}>{option}</Text>
               </Pressable>
             ))}
