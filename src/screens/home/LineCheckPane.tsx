@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
+import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
+import type { LineCheckAnalysis } from '../../ai/types';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
 import FilterChip from '../../components/FilterChip';
 import Section from '../../components/Section';
@@ -9,7 +11,6 @@ import {
   LINE_CHECK_TYPES,
   LINE_NOTICE_OPTIONS,
   LINE_PERSON_FILTERS,
-  createLineCheckAnalysis,
   getLineCheckTypeGuide,
   getLinePersonStatus,
   matchesLinePersonFilter,
@@ -44,7 +45,9 @@ export default function LineCheckPane({
   const [personFilter, setPersonFilter] = useState<LinePersonFilter>('最近やり取り');
   const [checkType, setCheckType] = useState<LineCheckType>('受信文チェック');
   const [messageText, setMessageText] = useState('');
-  const [hasChecked, setHasChecked] = useState(false);
+  const [analysis, setAnalysis] = useState<LineCheckAnalysis | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [copyNotice, setCopyNotice] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -72,15 +75,16 @@ export default function LineCheckPane({
   }, [candidates, personFilter, personQuery]);
 
   const typeGuide = getLineCheckTypeGuide(checkType);
-  const analysis = useMemo(() => createLineCheckAnalysis(selectedPerson, checkType, messageText), [checkType, messageText, selectedPerson]);
 
   const resetResult = () => {
-    setHasChecked(false);
+    setAnalysis(null);
+    setErrorMessage('');
     setCopyNotice('');
     setSavedNotice(false);
   };
 
-  const checkMessage = () => {
+  const checkMessage = async () => {
+    if (checking) return;
     if (!selectedPerson) {
       Alert.alert('相手を選んでください', '文面を確認する相手を先に選んでください。');
       return;
@@ -89,18 +93,33 @@ export default function LineCheckPane({
       Alert.alert('文面を入力してください', '送る前の文、相手から来た返信、スクショメモ、音声メモなどを入力してください。');
       return;
     }
-    setHasChecked(true);
-    setSavedNotice(false);
-    setCopyNotice('');
+
+    setChecking(true);
+    resetResult();
+    try {
+      const result = await getLlmAdapter().analyzeMessageCheck({
+        person: selectedPerson,
+        checkType,
+        text: messageText,
+      });
+      setAnalysis(result);
+    } catch (error) {
+      // AI失敗時は分析結果を持たない＝人脈カードへの保存操作ができない状態を維持する
+      setAnalysis(null);
+      setErrorMessage(toLlmErrorMessage(error));
+    } finally {
+      setChecking(false);
+    }
   };
 
   const copyReply = async () => {
+    if (!analysis) return;
     await Clipboard.setStringAsync(analysis.replyDraft);
     setCopyNotice('返信文をコピーしました');
   };
 
   const saveToPersonCard = async () => {
-    if (!selectedPerson) return;
+    if (!selectedPerson || !analysis) return;
 
     const memo = [
       `文面確認（${checkType}）`,
@@ -331,11 +350,21 @@ export default function LineCheckPane({
         </View>
       </Section>
 
-      <Pressable style={styles.fullPrimaryButton} onPress={checkMessage}>
-        <Text style={styles.fullPrimaryText}>AIで返信と更新案を作る</Text>
+      <Pressable style={[styles.fullPrimaryButton, checking && styles.buttonDisabled]} onPress={checkMessage} disabled={checking}>
+        {checking ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
+        <Text style={styles.fullPrimaryText}>{checking ? 'AIが分析中...' : 'AIで返信と更新案を作る'}</Text>
       </Pressable>
 
-      {hasChecked ? (
+      {errorMessage ? <Text style={styles.errorNotice}>{errorMessage}</Text> : null}
+
+      {checking ? (
+        <Section title="分析結果">
+          <View style={styles.loadingBox}>
+            <ActivityIndicator color="#153E75" size="large" />
+            <Text style={styles.loadingText}>AIが文面と人脈カードを分析しています。数秒〜数十秒かかることがあります。</Text>
+          </View>
+        </Section>
+      ) : analysis ? (
         <>
           <Section title="AIの結論" subtitle={`${selectedPerson?.name ?? '相手未選択'} / ${checkType}`}>
             <LineResultCard title="今どう返すか" body={analysis.judgement} />

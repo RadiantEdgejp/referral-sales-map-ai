@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -9,15 +11,14 @@ import {
   View,
 } from 'react-native';
 import { Send } from 'lucide-react-native';
+import { getLlmAdapter, toLlmErrorMessage } from '../ai/llmAdapter';
+import type { CoachAnswer } from '../ai/types';
 import AttachmentTextInput from '../components/AttachmentTextInput';
 import FilterChip from '../components/FilterChip';
 import SectionCard from '../components/SectionCard';
-import { createCoachMockAnswer } from '../data/mockAnalysis';
 import { getPeople } from '../storage/personStorage';
 import type { ScreenProps } from '../types/navigation';
 import type { Person } from '../types/person';
-
-type CoachAnswer = ReturnType<typeof createCoachMockAnswer>;
 
 const SAMPLE_COACH_PROMPT =
   '田中さんに美容サロン経営者を紹介してほしいです。まだ一回しか会っていません。今お願いしてもいいですか？';
@@ -27,6 +28,8 @@ export default function CoachChatScreen({ route }: ScreenProps<'CoachChat'>) {
   const [selectedPersonId, setSelectedPersonId] = useState('none');
   const [problem, setProblem] = useState(route.params?.initialPrompt ?? '');
   const [answer, setAnswer] = useState<CoachAnswer | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
     getPeople().then(setPeople);
@@ -36,14 +39,32 @@ export default function CoachChatScreen({ route }: ScreenProps<'CoachChat'>) {
     if (route.params?.initialPrompt) {
       setProblem(route.params.initialPrompt);
       setAnswer(null);
+      setErrorMessage('');
     }
   }, [route.params?.initialPrompt]);
 
-  const submit = () => {
-    setAnswer(createCoachMockAnswer(problem));
-  };
-
   const selectedPerson = people.find((person) => person.id === selectedPersonId);
+
+  const submit = async () => {
+    if (loading) return;
+    if (!problem.trim()) {
+      Alert.alert('相談内容を入力してください', '悩みや迷いを一文でもいいので書いてください。');
+      return;
+    }
+
+    setLoading(true);
+    setErrorMessage('');
+    setAnswer(null);
+    try {
+      const result = await getLlmAdapter().coachChat({ problem, person: selectedPerson });
+      setAnswer(result);
+    } catch (error) {
+      setAnswer(null);
+      setErrorMessage(toLlmErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -86,15 +107,25 @@ export default function CoachChatScreen({ route }: ScreenProps<'CoachChat'>) {
           onPress={() => {
             setProblem(SAMPLE_COACH_PROMPT);
             setAnswer(null);
+            setErrorMessage('');
           }}
         >
           <Text style={styles.sampleButtonText}>サンプル相談を入れる</Text>
         </Pressable>
 
-        <Pressable style={styles.submitButton} onPress={submit}>
-          <Send color="#FFFFFF" size={18} />
-          <Text style={styles.submitText}>相談を送信</Text>
+        <Pressable style={[styles.submitButton, loading && styles.submitDisabled]} onPress={submit} disabled={loading}>
+          {loading ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Send color="#FFFFFF" size={18} />}
+          <Text style={styles.submitText}>{loading ? 'AIが回答を作成中...' : '相談を送信'}</Text>
         </Pressable>
+
+        {errorMessage ? <Text style={styles.errorNotice}>{errorMessage}</Text> : null}
+
+        {loading && (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator color="#153E75" size="large" />
+            <Text style={styles.loadingText}>AIコーチが回答を考えています。数秒〜数十秒かかることがあります。</Text>
+          </View>
+        )}
 
         {answer && (
           <SectionCard title="仮回答">
@@ -189,6 +220,35 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '900',
     fontSize: 16,
+  },
+  submitDisabled: {
+    opacity: 0.6,
+  },
+  errorNotice: {
+    backgroundColor: '#FEE2E2',
+    borderColor: '#FCA5A5',
+    borderRadius: 8,
+    borderWidth: 1,
+    color: '#B91C1C',
+    fontWeight: '800',
+    lineHeight: 20,
+    marginBottom: 12,
+    padding: 12,
+  },
+  loadingBox: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 12,
+    marginBottom: 12,
+    padding: 24,
+  },
+  loadingText: {
+    color: '#64748B',
+    fontWeight: '700',
+    textAlign: 'center',
   },
   answerItem: {
     marginBottom: 14,

@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
+import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
+import type { PreMeetingNavigation } from '../../ai/types';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
 import FilterChip from '../../components/FilterChip';
 import Info from '../../components/Info';
 import Section from '../../components/Section';
 import { dedupePeople } from '../../logic/personPriority';
-import { createPreMeetingNavigation, getActionGuidance } from '../../logic/preMeetingNav';
+import { getActionGuidance } from '../../logic/preMeetingNav';
 import { updatePerson } from '../../storage/personStorage';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
@@ -35,7 +37,9 @@ export default function PreMeetingPane({
   const [selectedPersonId, setSelectedPersonId] = useState(initialPersonId ?? '');
   const [actionType, setActionType] = useState('情報交換前');
   const [memo, setMemo] = useState('');
-  const [hasGenerated, setHasGenerated] = useState(false);
+  const [nav, setNav] = useState<PreMeetingNavigation | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [copyNotice, setCopyNotice] = useState(false);
   const [personQuery, setPersonQuery] = useState('');
   const [showReferenceDetails, setShowReferenceDetails] = useState(false);
@@ -49,7 +53,6 @@ export default function PreMeetingPane({
     return uniquePeople.find((person) => person.id === currentId) ?? uniquePeople[0];
   }, [initialPersonId, selectedPersonId, uniquePeople]);
 
-  const nav = useMemo(() => createPreMeetingNavigation(selectedPerson, actionType), [actionType, selectedPerson]);
   const currentPersonId = selectedPerson?.id ?? selectedPersonId;
   const candidatePeople = useMemo(() => {
     const normalized = personQuery.trim().toLowerCase();
@@ -65,7 +68,33 @@ export default function PreMeetingPane({
     return dedupePeople(matches).slice(0, 20);
   }, [personQuery, uniquePeople]);
 
+  const generateNav = async () => {
+    if (generating) return;
+
+    setGenerating(true);
+    setErrorMessage('');
+    setNav(null);
+    setCopyNotice(false);
+    setShowNavDetails(false);
+    setShowMoreNavActions(false);
+    try {
+      const result = await getLlmAdapter().createPreMeetingNav({
+        person: selectedPerson,
+        actionType,
+        memo,
+      });
+      setNav(result);
+    } catch (error) {
+      // AI失敗時はナビを表示せず、保存操作もできない状態を維持する
+      setNav(null);
+      setErrorMessage(toLlmErrorMessage(error));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const copyQuestions = () => {
+    if (!nav) return;
     Clipboard.setStringAsync(nav.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')).catch(() => undefined);
     setCopyNotice(true);
     Alert.alert('質問をコピーしました', '予定前ナビで決めた質問をコピーしました。');
@@ -76,7 +105,7 @@ export default function PreMeetingPane({
   };
 
   const saveNavToPersonCard = async () => {
-    if (!selectedPerson) {
+    if (!selectedPerson || !nav) {
       return;
     }
 
@@ -181,7 +210,8 @@ export default function PreMeetingPane({
                       style={[styles.personSelectCard, selected && styles.personSelectCardActive]}
                       onPress={() => {
                         setSelectedPersonId(person.id);
-                        setHasGenerated(false);
+                        setNav(null);
+                        setErrorMessage('');
                         setCopyNotice(false);
                         setShowReferenceDetails(false);
                         setShowNavDetails(false);
@@ -221,7 +251,8 @@ export default function PreMeetingPane({
               selected={actionType === item}
               onPress={() => {
                 setActionType(item);
-                setHasGenerated(false);
+                setNav(null);
+                setErrorMessage('');
                 setCopyNotice(false);
                 setShowMoreNavActions(false);
               }}
@@ -278,19 +309,24 @@ export default function PreMeetingPane({
       </Section>
 
       <Pressable
-        style={styles.fullPrimaryButton}
-        onPress={() => {
-          setHasGenerated(true);
-          setCopyNotice(false);
-          setShowNavDetails(false);
-          setShowMoreNavActions(false);
-          Alert.alert('今日のナビを作りました', '人脈カード情報と追加メモを参照したモックナビを表示します。');
-        }}
+        style={[styles.fullPrimaryButton, generating && styles.buttonDisabled]}
+        onPress={generateNav}
+        disabled={generating}
       >
-        <Text style={styles.fullPrimaryText}>今日のナビを作る</Text>
+        {generating ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
+        <Text style={styles.fullPrimaryText}>{generating ? 'AIがナビを作成中...' : '今日のナビを作る'}</Text>
       </Pressable>
 
-      {hasGenerated ? (
+      {errorMessage ? <Text style={styles.errorNotice}>{errorMessage}</Text> : null}
+
+      {generating ? (
+        <Section title="ナビ結果">
+          <View style={styles.loadingBox}>
+            <ActivityIndicator color="#153E75" size="large" />
+            <Text style={styles.loadingText}>AIが人脈カード情報と追加メモから今日のナビを作成しています。数秒〜数十秒かかることがあります。</Text>
+          </View>
+        </Section>
+      ) : nav ? (
         <Section title="ナビ結果" subtitle={`${selectedPerson?.name ?? '相手未選択'} / ${actionType}`}>
           <View style={styles.navSummaryCard}>
             <Info label="今日の目的" value={nav.purpose} compact />

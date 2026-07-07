@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
 import Info from '../../components/Info';
 import MemoField from '../../components/MemoField';
 import Section from '../../components/Section';
-import { createAfterMemoQuestions, createAfterMemoSuggestion } from '../../logic/afterMemo';
+import { createAfterMemoQuestions } from '../../logic/afterMemo';
 import { scheduleContactNotification } from '../../notifications/notificationService';
 import { updatePerson } from '../../storage/personStorage';
+import type { AfterMemoAiSuggestion } from '../../types/aiAnalysis';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
 import { homeStyles as styles } from './homeStyles';
@@ -40,29 +42,49 @@ export default function AfterMemoPane({
   const [talkMemo, setTalkMemo] = useState('');
   const [allInfoMemo, setAllInfoMemo] = useState('');
   const [nextTodo, setNextTodo] = useState('');
-  const [aiGenerated, setAiGenerated] = useState(false);
+  const [suggestion, setSuggestion] = useState<AfterMemoAiSuggestion | null>(null);
+  const [organizing, setOrganizing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const [showAiDetails, setShowAiDetails] = useState(false);
   const [updatedNotice, setUpdatedNotice] = useState(false);
-
-  const suggestion = useMemo(
-    () =>
-      createAfterMemoSuggestion({
-        person,
-        answers,
-        talkMemo,
-        allInfoMemo,
-        nextTodo,
-      }),
-    [allInfoMemo, answers, nextTodo, person, talkMemo],
-  );
 
   const setAnswer = (question: string, value: string) => {
     setAnswers((current) => ({ ...current, [question]: value }));
   };
 
+  const organizeWithAi = async () => {
+    if (organizing) return;
+
+    setOrganizing(true);
+    setErrorMessage('');
+    setSuggestion(null);
+    setShowAiDetails(false);
+    setUpdatedNotice(false);
+    try {
+      const result = await getLlmAdapter().analyzeAfterMemo({
+        person,
+        answers,
+        talkMemo,
+        allInfoMemo,
+        nextTodo,
+      });
+      setSuggestion(result);
+    } catch (error) {
+      // AI失敗時は更新案を持たない＝人脈カード更新（DB書き込み）ができない状態を維持する
+      setSuggestion(null);
+      setErrorMessage(toLlmErrorMessage(error));
+    } finally {
+      setOrganizing(false);
+    }
+  };
+
   const updatePersonCard = async () => {
     if (!person) {
       Alert.alert('人脈カードがありません', '更新対象の人物を選んでください。');
+      return;
+    }
+    if (!suggestion) {
+      Alert.alert('AIの更新案がありません', '先に「AIで整理する」を実行してください。');
       return;
     }
 
@@ -94,6 +116,10 @@ export default function AfterMemoPane({
   const scheduleNextContact = async () => {
     if (!person) {
       Alert.alert('人脈カードがありません', '通知を設定する人物を選んでください。');
+      return;
+    }
+    if (!suggestion) {
+      Alert.alert('AIの更新案がありません', '先に「AIで整理する」を実行してください。');
       return;
     }
 
@@ -173,18 +199,24 @@ export default function AfterMemoPane({
       </Section>
 
       <Pressable
-        style={styles.fullPrimaryButton}
-        onPress={() => {
-          setAiGenerated(true);
-          setShowAiDetails(false);
-          setUpdatedNotice(false);
-          Alert.alert('後メモを整理しました', '入力内容から人脈カード更新案を作りました。');
-        }}
+        style={[styles.fullPrimaryButton, organizing && styles.buttonDisabled]}
+        onPress={organizeWithAi}
+        disabled={organizing}
       >
-        <Text style={styles.fullPrimaryText}>AIで整理する</Text>
+        {organizing ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
+        <Text style={styles.fullPrimaryText}>{organizing ? 'AIが整理中...' : 'AIで整理する'}</Text>
       </Pressable>
 
-      {aiGenerated ? (
+      {errorMessage ? <Text style={styles.errorNotice}>{errorMessage}</Text> : null}
+
+      {organizing ? (
+        <Section title="AIの人脈カード更新案">
+          <View style={styles.loadingBox}>
+            <ActivityIndicator color="#153E75" size="large" />
+            <Text style={styles.loadingText}>AIが回答と会話データから更新案を作成しています。数秒〜数十秒かかることがあります。</Text>
+          </View>
+        </Section>
+      ) : suggestion ? (
         <Section title="AIの人脈カード更新案" subtitle="分類・ゴール・次アクションを、人脈カードへ戻すための案です。">
           <View style={styles.navSummaryCard}>
             <Info label="分類更新案" value={suggestion.categoryUpdate} compact />
