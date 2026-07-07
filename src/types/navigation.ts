@@ -15,3 +15,15 @@ export type ScreenProps<T extends keyof RootStackParamList> = NativeStackScreenP
   RootStackParamList,
   T
 >;
+
+/** Screens shown while the user is signed out (Issue #10). */
+export type AuthStackParamList = {
+  Login: undefined;
+  SignUp: undefined;
+  ResetPassword: undefined;
+};
+
+export type AuthScreenProps<T extends keyof AuthStackParamList> = NativeStackScreenProps<
+  AuthStackParamList,
+  T
+>;

@@ -1,0 +1,97 @@
+import { StyleSheet } from 'react-native';
+
+export const authStyles = StyleSheet.create({
+  flex: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
+  container: {
+    padding: 20,
+    paddingTop: 40,
+    maxWidth: 480,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  title: {
+    color: '#0F172A',
+    fontSize: 26,
+    fontWeight: '900',
+  },
+  subcopy: {
+    color: '#64748B',
+    fontWeight: '700',
+    marginTop: 6,
+    marginBottom: 24,
+    lineHeight: 20,
+  },
+  label: {
+    color: '#0F172A',
+    fontWeight: '900',
+    marginBottom: 6,
+    marginTop: 14,
+  },
+  input: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    minHeight: 48,
+    paddingHorizontal: 14,
+    color: '#0F172A',
+    fontSize: 16,
+  },
+  errorBox: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 16,
+  },
+  errorText: {
+    color: '#B91C1C',
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  infoBox: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 16,
+  },
+  infoText: {
+    color: '#1D4ED8',
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  primaryButton: {
+    minHeight: 52,
+    borderRadius: 8,
+    backgroundColor: '#153E75',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 24,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 16,
+  },
+  disabled: {
+    opacity: 0.5,
+  },
+  linkRow: {
+    marginTop: 20,
+    gap: 12,
+  },
+  linkText: {
+    color: '#153E75',
+    fontWeight: '800',
+    textAlign: 'center',
+    paddingVertical: 6,
+  },
+});
