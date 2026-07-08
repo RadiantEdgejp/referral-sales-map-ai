@@ -8,7 +8,11 @@ export function dedupePeople(people: Person[]) {
   const unique = new Map<string, Person>();
 
   people.forEach((person) => {
-    const key = [person.name, person.industry, person.relationship].map((value) => value.trim()).join('|');
+    // 会社・役職が異なる同姓同名は別人として扱う（CLAUDE.md 5.2）。
+    // ここで畳んでよいのは全項目が一致する「真の重複」だけ。
+    const key = [person.name, person.company ?? '', person.role ?? '', person.industry, person.relationship]
+      .map((value) => value.trim())
+      .join('|');
     if (!unique.has(key)) {
       unique.set(key, person);
     }

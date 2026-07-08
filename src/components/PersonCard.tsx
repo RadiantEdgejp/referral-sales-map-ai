@@ -31,6 +31,9 @@ export default function PersonCard({ person, onPress, onLinePress, onNotifyPress
       <View style={styles.header}>
         <View style={styles.nameBlock}>
           <Text style={styles.name}>{person.name}</Text>
+          {person.company || person.role ? (
+            <Text style={styles.companyMeta}>{[person.company, person.role].filter(Boolean).join('・')}</Text>
+          ) : null}
           <Text style={styles.meta}>
             {person.industry} / {person.relationship}
           </Text>
@@ -164,6 +167,11 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    elevation: 1,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
   },
   pressed: {
     opacity: 0.72,
@@ -215,6 +223,12 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontSize: 19,
     fontWeight: '900',
+  },
+  companyMeta: {
+    color: '#153E75',
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 3,
   },
   meta: {
     color: '#64748B',
