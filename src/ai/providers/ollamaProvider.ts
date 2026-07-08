@@ -1,4 +1,4 @@
-import { GAP_TYPES, isGapType } from '../../logic/dataGaps';
+import { GAP_DEFINITIONS, GAP_TYPES, isGapType } from '../../logic/dataGaps';
 import type { AfterMemoAiSuggestion } from '../../types/aiAnalysis';
 import type { Person, PersonAnalysis, PersonCategory } from '../../types/person';
 import { formatAIContextForPrompt } from '../aiContext';
@@ -274,14 +274,21 @@ ${gapInstruction}
       }
 
       const name = input.person?.name ?? '相手';
-      const trimmedQuestions = questions.slice(0, 3);
-      // 質問i（i < openGaps数）の根拠は対応する未解決ギャップの理由。
-      // それ以降は基本質問である旨を明示。AIが書いた根拠文は採用しない。
-      const questionReasons = trimmedQuestions.map((_, index) =>
-        openGaps[index]
-          ? `${openGaps[index].reason}のため`
-          : '未解決の確認事項なし。関係段階に応じた基本質問',
-      );
+      // 質問と根拠の完全一致を保証するため、未解決ギャップ分の質問は統制語彙の
+      // 定義文から決定的に生成する（モックプロバイダと同じ方式）。LLMの質問は
+      // 残り枠にのみ使い、AIが書いた根拠文は採用しない。
+      const gapPairs = openGaps
+        .filter((gap) => isGapType(gap.gapType))
+        .map((gap) => ({
+          question: GAP_DEFINITIONS[gap.gapType as (typeof GAP_TYPES)[number]].question(input.person),
+          reason: `${gap.reason}のため`,
+        }));
+      const llmPairs = questions
+        .filter((q) => !gapPairs.some((pair) => pair.question === q))
+        .map((q) => ({ question: q, reason: '未解決の確認事項なし。関係段階に応じた基本質問' }));
+      const finalPairs = [...gapPairs, ...llmPairs].slice(0, 3);
+      const trimmedQuestions = finalPairs.map((pair) => pair.question);
+      const questionReasons = finalPairs.map((pair) => pair.reason);
       return {
         purpose,
         destination: str(raw, 'destination', 'まず周辺課題と人脈の有無を確認する。'),
