@@ -4,8 +4,11 @@ import { Archive, Bell, CalendarClock, ChevronRight, Share2 } from 'lucide-react
 import AttachmentTextInput from '../components/AttachmentTextInput';
 import ContactPickerModal from '../components/ContactPickerModal';
 import SectionCard from '../components/SectionCard';
+import { REACTION_LABELS, SCORE_FIELD_LABELS, type ScoreField } from '../logic/relationshipScore';
 import { cancelContactNotification, scheduleContactNotification } from '../notifications/notificationService';
+import { getInteractionTimeline, type TimelineEntry } from '../storage/interactionLedger';
 import { getPeople, updatePerson } from '../storage/personStorage';
+import { getUpdateHistories, type UpdateHistoryEntry } from '../storage/updateHistoryStorage';
 import type { ScreenProps } from '../types/navigation';
 import type { Person } from '../types/person';
 import { formatDateTime } from '../utils/date';
@@ -18,6 +21,10 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
   const [roleDraft, setRoleDraft] = useState('');
   const [allPeople, setAllPeople] = useState<Person[]>([]);
   const [introducerPickerOpen, setIntroducerPickerOpen] = useState(false);
+  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [histories, setHistories] = useState<UpdateHistoryEntry[]>([]);
+  const [scoreHistoryField, setScoreHistoryField] = useState<ScoreField | null>(null);
+  const [scoreHistoryOpen, setScoreHistoryOpen] = useState(false);
 
   const archivePerson = async () => {
     if (!person) {
@@ -44,7 +51,24 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
       setCompanyDraft(found?.company ?? '');
       setRoleDraft(found?.role ?? '');
     });
+
+    // 行動→反応タイムラインとスコア根拠履歴（蓄積が目に見える資産になる）
+    getInteractionTimeline(route.params.personId)
+      .then(setTimeline)
+      .catch(() => setTimeline([]));
+    getUpdateHistories(route.params.personId)
+      .then(setHistories)
+      .catch(() => setHistories([]));
   }, [route.params.personId]);
+
+  const openScoreHistory = (field: ScoreField) => {
+    setScoreHistoryField(field);
+    setScoreHistoryOpen(true);
+  };
+
+  const filteredHistories = scoreHistoryField
+    ? histories.filter((entry) => entry.changes.some((change) => change.field === scoreHistoryField))
+    : histories;
 
   // 紹介チェーン（contacts.introduced_by）：紹介元と、この人から紹介された人
   const introducer = person?.introducedById
@@ -239,11 +263,36 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
 
       <Info title="関係性" body={person.relationship} />
       <SectionCard title="可能性スコア">
-        <Score label="顧客可能性" value={person.customerPotential} />
-        <Score label="紹介元可能性" value={person.referrerPotential} />
-        <Score label="紹介先可能性" value={person.referralTargetPotential} />
-        <Score label="情報源価値" value={person.informationValue} />
-        <Score label="将来候補度" value={person.futurePotential} />
+        <Text style={styles.scoreHint}>スコアは記録された行動と反応からのみ変動します。行をタップすると根拠履歴を表示します。</Text>
+        <Score label="温度感" value={person.temperatureScore} onPress={() => openScoreHistory('temperatureScore')} />
+        <Score label="顧客可能性" value={person.customerPotential} onPress={() => openScoreHistory('customerPotential')} />
+        <Score label="紹介元可能性" value={person.referrerPotential} onPress={() => openScoreHistory('referrerPotential')} />
+        <Score label="紹介先可能性" value={person.referralTargetPotential} onPress={() => openScoreHistory('referralTargetPotential')} />
+        <Score label="情報源価値" value={person.informationValue} onPress={() => openScoreHistory('informationValue')} />
+        <Score label="将来候補度" value={person.futurePotential} onPress={() => openScoreHistory('futurePotential')} />
+      </SectionCard>
+
+      <SectionCard title="行動と反応のタイムライン">
+        {timeline.length > 0 ? (
+          timeline.map((entry) => (
+            <View key={entry.rowId} style={styles.timelineRow}>
+              <Text style={styles.timelineDate}>{formatDateTime(entry.happenedAt)}</Text>
+              <View style={styles.timelineTitleRow}>
+                <Text style={styles.timelineTitle}>{entry.title}</Text>
+                {entry.reaction ? (
+                  <Text style={[styles.reactionChip, reactionChipStyle(entry.reaction)]}>
+                    {REACTION_LABELS[entry.reaction]}
+                  </Text>
+                ) : null}
+              </View>
+              {entry.summary ? <Text style={styles.timelineSummary}>{entry.summary}</Text> : null}
+            </View>
+          ))
+        ) : (
+          <Text style={styles.paragraph}>
+            まだ行動記録がありません。ホームの優先行動を完了したり、後メモ・文面確認を保存すると、ここに行動→反応の履歴が蓄積されます。
+          </Text>
+        )}
       </SectionCard>
       <Info title="初回切り口" body={person.openingTalk} />
       <Info title="次に聞く質問" body={person.nextQuestion} />
@@ -323,6 +372,48 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
       />
 
       <Modal
+        visible={scoreHistoryOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setScoreHistoryOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>
+              スコアの根拠{scoreHistoryField ? `：${SCORE_FIELD_LABELS[scoreHistoryField]}` : ''}
+            </Text>
+            <ScrollView style={styles.historyScroll}>
+              {filteredHistories.length > 0 ? (
+                filteredHistories.map((entry) => (
+                  <View key={entry.rowId} style={styles.historyRow}>
+                    <Text style={styles.timelineDate}>{formatDateTime(entry.createdAt)}</Text>
+                    {entry.changes
+                      .filter((change) => !scoreHistoryField || change.field === scoreHistoryField)
+                      .map((change) => (
+                        <Text key={`${entry.rowId}-${change.field}`} style={styles.historyDelta}>
+                          {change.label} {change.old}→{change.new}（{change.delta > 0 ? '+' : ''}
+                          {change.delta}）
+                        </Text>
+                      ))}
+                    <Text style={styles.timelineSummary}>{entry.summary}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.paragraph}>
+                  まだ変動履歴がありません。行動と反応を記録すると、いつ・何が起きて・何点動いたかがここに残ります。
+                </Text>
+              )}
+            </ScrollView>
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancelButton} onPress={() => setScoreHistoryOpen(false)}>
+                <Text style={styles.modalCancelText}>閉じる</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
         visible={archiveConfirmOpen}
         transparent
         animationType="fade"
@@ -357,16 +448,29 @@ function Info({ title, body }: { title: string; body: string }) {
   );
 }
 
-function Score({ label, value }: { label: string; value: number }) {
+function Score({ label, value, onPress }: { label: string; value: number; onPress?: () => void }) {
   return (
-    <View style={styles.scoreRow}>
+    <Pressable style={styles.scoreRow} onPress={onPress} disabled={!onPress}>
       <Text style={styles.scoreLabel}>{label}</Text>
       <View style={styles.scoreTrack}>
         <View style={[styles.scoreBar, { width: `${value}%` }]} />
       </View>
       <Text style={styles.scoreValue}>{value}</Text>
-    </View>
+    </Pressable>
   );
+}
+
+function reactionChipStyle(reaction: 'positive' | 'neutral' | 'no_response' | 'rejected') {
+  switch (reaction) {
+    case 'positive':
+      return styles.reactionPositive;
+    case 'rejected':
+      return styles.reactionRejected;
+    case 'no_response':
+      return styles.reactionNoResponse;
+    default:
+      return styles.reactionNeutral;
+  }
 }
 
 function ReminderButton({
@@ -666,6 +770,70 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginBottom: 12,
+  },
+  scoreHint: {
+    color: '#64748B',
+    fontSize: 12,
+    lineHeight: 17,
+    marginBottom: 12,
+  },
+  timelineRow: {
+    borderLeftColor: '#CBD5E1',
+    borderLeftWidth: 2,
+    marginBottom: 12,
+    paddingLeft: 10,
+  },
+  timelineDate: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  timelineTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 2,
+  },
+  timelineTitle: {
+    color: '#0F172A',
+    fontSize: 14,
+    fontWeight: '900',
+    flexShrink: 1,
+  },
+  timelineSummary: {
+    color: '#475569',
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 3,
+  },
+  reactionChip: {
+    borderRadius: 10,
+    fontSize: 11,
+    fontWeight: '900',
+    overflow: 'hidden',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  reactionPositive: { backgroundColor: '#DCFCE7', color: '#166534' },
+  reactionNeutral: { backgroundColor: '#E2E8F0', color: '#334155' },
+  reactionNoResponse: { backgroundColor: '#FEF3C7', color: '#92400E' },
+  reactionRejected: { backgroundColor: '#FEE2E2', color: '#B91C1C' },
+  historyScroll: {
+    marginTop: 12,
+    maxHeight: 360,
+  },
+  historyRow: {
+    borderBottomColor: '#E2E8F0',
+    borderBottomWidth: 1,
+    marginBottom: 10,
+    paddingBottom: 10,
+  },
+  historyDelta: {
+    color: '#0F766E',
+    fontSize: 13,
+    fontWeight: '900',
+    marginTop: 2,
   },
   scoreLabel: {
     color: '#334155',

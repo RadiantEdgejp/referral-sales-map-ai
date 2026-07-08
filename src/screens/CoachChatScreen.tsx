@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { Bot, ChevronDown, Send, Sparkles } from 'lucide-react-native';
+import { buildContactAIContext } from '../ai/aiContext';
 import { getLlmAdapter, toLlmErrorMessage } from '../ai/llmAdapter';
 import type { CoachAnswer } from '../ai/types';
 import ContactPickerModal from '../components/ContactPickerModal';
@@ -127,7 +128,9 @@ export default function CoachChatScreen({ route }: ScreenProps<'CoachChat'>) {
 
     try {
       const history = turns.slice(-6).map((turn) => ({ question: turn.question, answer: turn.answer }));
-      const result = await getLlmAdapter().coachChat({ problem, person: selectedPerson, history });
+      // 生成直前にSupabaseから蓄積データを集約して注入する（CLAUDE.md 6章）
+      const context = selectedPerson ? await buildContactAIContext(selectedPerson) : undefined;
+      const result = await getLlmAdapter().coachChat({ problem, person: selectedPerson, history, context });
 
       const newTurn: ChatTurn = {
         key: `local-${Date.now()}`,

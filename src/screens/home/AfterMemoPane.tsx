@@ -1,12 +1,17 @@
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { buildContactAIContext } from '../../ai/aiContext';
 import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
 import Info from '../../components/Info';
 import MemoField from '../../components/MemoField';
 import Section from '../../components/Section';
 import { createAfterMemoQuestions } from '../../logic/afterMemo';
+import { deriveGapSignals, GAP_DEFINITIONS, isGapType, normalizeAiGaps, type GapType } from '../../logic/dataGaps';
+import { recordReactionEvent } from '../../logic/groundedEvents';
+import { inferReactionFromText, REACTION_LABELS } from '../../logic/relationshipScore';
 import { scheduleContactNotification } from '../../notifications/notificationService';
+import { addOpenGaps, resolveGaps } from '../../storage/dataGapStorage';
 import { saveAfterMemo } from '../../storage/flowLogStorage';
 import { updatePerson } from '../../storage/personStorage';
 import type { AfterMemoAiSuggestion } from '../../types/aiAnalysis';
@@ -71,12 +76,15 @@ export default function AfterMemoPane({
     setShowAiDetails(false);
     setUpdatedNotice(false);
     try {
+      // 生成直前にSupabaseから蓄積データを集約して注入する（CLAUDE.md 6章）
+      const context = person ? await buildContactAIContext(person) : undefined;
       const result = await getLlmAdapter().analyzeAfterMemo({
         person,
         answers,
         talkMemo,
         allInfoMemo,
         nextTodo,
+        context,
       });
       setSuggestion(result);
     } catch (error) {
@@ -112,7 +120,7 @@ export default function AfterMemoPane({
 
     try {
       // 後メモ本体を after_memos に永続化してから、人脈カードへ反映する（Issue #17）
-      await saveAfterMemo({
+      const afterMemoRowId = await saveAfterMemo({
         person,
         questions,
         answers,
@@ -131,9 +139,53 @@ export default function AfterMemoPane({
         lineMessage: suggestion.lineMessage,
         additionalMemo: [person.additionalMemo, memoLines.join('\n')].filter(Boolean).join('\n\n'),
       });
-      onPersonUpdated(saved);
+
+      // 面談イベントを台帳へ記録（行動=面談、反応=回答テキストからの決定的推定）。
+      // スコア補正は ai_signal スケール（ユーザーが直接選んだ反応より小さい幅）。
+      const userInputText = [Object.values(answers).join('\n'), talkMemo, allInfoMemo, nextTodo].join('\n');
+      const reaction = inferReactionFromText(userInputText);
+      const event = await recordReactionEvent({
+        person: saved,
+        action: 'meeting_memo',
+        reaction,
+        title: '面談・会話を後メモとして記録',
+        summary: suggestion.accumulation.slice(0, 200),
+        sourceType: 'after_memo',
+        sourceId: afterMemoRowId,
+        scale: 'ai_signal',
+      });
+
+      // data_gaps 更新: テキストの決定的シグナル ＋ AI抽出をマージ（統制語彙のみ）
+      const signals = deriveGapSignals(userInputText);
+      const aiResolved = (suggestion.resolvedGapTypes ?? []).filter(isGapType);
+      const resolvedTypes = [...new Set<GapType>([...signals.resolved, ...aiResolved])];
+      const aiOpen = normalizeAiGaps(suggestion.unresolvedGaps);
+      const openTypes = [...new Set<GapType>([...signals.stillOpen, ...aiOpen.map((gap) => gap.gapType)])].filter(
+        (gapType) => !resolvedTypes.includes(gapType),
+      );
+      await resolveGaps(event.saved, resolvedTypes);
+      await addOpenGaps(
+        event.saved,
+        openTypes.map((gapType) => {
+          const aiGap = aiOpen.find((gap) => gap.gapType === gapType);
+          return {
+            gapType,
+            title: GAP_DEFINITIONS[gapType].title,
+            reason: aiGap?.reason ?? GAP_DEFINITIONS[gapType].reason,
+          };
+        }),
+      );
+
+      onPersonUpdated(event.saved);
       setUpdatedNotice(true);
-      Alert.alert('人脈カードを更新しました', '後メモの内容を人脈カードに蓄積しました。');
+      Alert.alert(
+        '人脈カードを更新しました',
+        [
+          '後メモの内容を人脈カードに蓄積しました。',
+          `記録した反応：${REACTION_LABELS[reaction]} / スコア変動：${event.changeSummary}`,
+          openTypes.length > 0 ? `未確認事項：${openTypes.map((gapType) => GAP_DEFINITIONS[gapType].title).join('・')}` : '未確認事項はありません。',
+        ].join('\n'),
+      );
     } catch (error) {
       // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
       Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '後メモの保存中にエラーが発生しました。');

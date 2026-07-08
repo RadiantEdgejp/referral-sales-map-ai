@@ -156,4 +156,12 @@ export type AfterMemoAiSuggestion = {
   lineMessage: string;
   accumulation: string;
   structured?: AfterMemoAiOutput;
+  /**
+   * AIが抽出した「まだ確認できていない重要事項」。
+   * gapType は src/logic/dataGaps.ts の統制語彙に正規化されてから
+   * data_gaps へ保存される（未知の値は捨てる）。
+   */
+  unresolvedGaps?: Array<{ gapType: string; reason?: string }>;
+  /** AIが「今回の会話で確認できた」と判断した gapType（統制語彙） */
+  resolvedGapTypes?: string[];
 };

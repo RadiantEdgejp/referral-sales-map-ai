@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
+import { buildContactAIContext } from '../../ai/aiContext';
 import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
 import type { LineCheckAnalysis } from '../../ai/types';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
@@ -17,8 +18,12 @@ import {
   type LineCheckType,
   type LinePersonFilter,
 } from '../../logic/lineCheck';
+import { deriveGapSignals, GAP_DEFINITIONS } from '../../logic/dataGaps';
+import { recordReactionEvent } from '../../logic/groundedEvents';
 import { dedupePeople } from '../../logic/personPriority';
+import { REACTION_LABELS, reactionFromTemperatureLabel } from '../../logic/relationshipScore';
 import { cancelContactNotification, scheduleContactNotification } from '../../notifications/notificationService';
+import { addOpenGaps, resolveGaps } from '../../storage/dataGapStorage';
 import { saveMessageCheck } from '../../storage/flowLogStorage';
 import { updatePerson } from '../../storage/personStorage';
 import type { Person } from '../../types/person';
@@ -80,10 +85,13 @@ export default function LineCheckPane({
     setChecking(true);
     resetResult();
     try {
+      // 生成直前にSupabaseから蓄積データを集約して注入する（CLAUDE.md 6章）
+      const context = await buildContactAIContext(selectedPerson);
       const result = await getLlmAdapter().analyzeMessageCheck({
         person: selectedPerson,
         checkType,
         text: messageText,
+        context,
       });
       setAnalysis(result);
     } catch (error) {
@@ -118,7 +126,7 @@ export default function LineCheckPane({
 
     try {
       // 分析結果を message_checks に永続化してから、人脈カードへ反映する（Issue #17）
-      await saveMessageCheck({
+      const messageCheckRowId = await saveMessageCheck({
         person: selectedPerson,
         checkType,
         text: messageText,
@@ -133,9 +141,43 @@ export default function LineCheckPane({
         cautions: analysis.caution,
         additionalMemo: [selectedPerson.additionalMemo, memo].filter(Boolean).join('\n\n'),
       });
-      onPersonUpdated(saved);
+
+      // 送信前チェック等は「送信イベント」、受信文は「受信イベント」として台帳に記録し、
+      // AI温度感ラベルを反応（ai_signalスケール）としてスコアに反映する。
+      const isOutbound = checkType === '送信前チェック' || checkType === '紹介依頼文' || checkType === 'お礼文' || checkType === '返信作成';
+      const reaction = reactionFromTemperatureLabel(analysis.temperature.label);
+      const event = await recordReactionEvent({
+        person: saved,
+        action: isOutbound ? 'message_sent' : 'message_received',
+        reaction,
+        title: `文面確認（${checkType}）を保存`,
+        summary: `温度感：${analysis.temperature.label}。${analysis.judgement.slice(0, 120)}`,
+        sourceType: 'message_check',
+        sourceId: messageCheckRowId,
+        scale: 'ai_signal',
+      });
+
+      // 受信文からもdata_gapsを更新する（確認できた事項をresolved、未確認をopenに）
+      const signals = deriveGapSignals(messageText);
+      await resolveGaps(event.saved, signals.resolved);
+      await addOpenGaps(
+        event.saved,
+        signals.stillOpen.map((gapType) => ({
+          gapType,
+          title: GAP_DEFINITIONS[gapType].title,
+          reason: GAP_DEFINITIONS[gapType].reason,
+        })),
+      );
+
+      onPersonUpdated(event.saved);
       setSavedNotice(true);
-      Alert.alert('人脈カードに保存しました', 'LINE・DMの内容から抽出した営業データを人脈カードに蓄積しました。');
+      Alert.alert(
+        '人脈カードに保存しました',
+        [
+          'LINE・DMの内容から抽出した営業データを人脈カードに蓄積しました。',
+          `記録した反応：${REACTION_LABELS[reaction]} / スコア変動：${event.changeSummary}`,
+        ].join('\n'),
+      );
     } catch (error) {
       // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
       Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '文面確認の保存中にエラーが発生しました。');

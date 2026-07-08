@@ -1,6 +1,8 @@
+import { GAP_TYPES, isGapType } from '../../logic/dataGaps';
 import type { AfterMemoAiSuggestion } from '../../types/aiAnalysis';
 import type { Person, PersonAnalysis, PersonCategory } from '../../types/person';
-import { LlmError, type LlmAdapter, type LineCheckAnalysis, type PreMeetingNavigation } from '../types';
+import { formatAIContextForPrompt } from '../aiContext';
+import { LlmError, type ContactAIContext, type LlmAdapter, type LineCheckAnalysis, type PreMeetingNavigation } from '../types';
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:11434';
 const DEFAULT_MODEL = 'llama3:latest';
@@ -125,8 +127,10 @@ function categories(raw: JsonObject, key: string): PersonCategory[] {
   return picked.length > 0 ? [...new Set(picked)] : ['将来候補'];
 }
 
-function personContext(person?: Person) {
+function personContext(person?: Person, context?: ContactAIContext) {
   if (!person) return '（人脈カード未選択）';
+  // 別contact_idの文脈混入ガード（CLAUDE.md 6章）
+  const safeContext = context && context.contactId === person.id ? context : undefined;
   return [
     `名前: ${person.name}`,
     person.company ? `会社: ${person.company}` : '',
@@ -139,6 +143,7 @@ function personContext(person?: Person) {
     `注意点: ${person.cautions}`,
     person.rawMemo ? `初回メモ: ${person.rawMemo.slice(0, 400)}` : '',
     person.additionalMemo ? `直近のやり取りメモ（抜粋）: ${person.additionalMemo.slice(-600)}` : '',
+    safeContext ? `\n${formatAIContextForPrompt(safeContext)}` : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -225,11 +230,15 @@ ${input.memo}
   async createPreMeetingNav(input) {
     const prompt = `${COMMON_RULES}
 
-これから「${input.actionType}」の接触をします。以下の人脈カード情報を参照して、予定前ナビをJSONで出力してください。
+これから「${input.actionType}」の接触をします。以下の人脈カード情報と蓄積データを参照して、予定前ナビをJSONで出力してください。
 
 人脈カード:
-${personContext(input.person)}
+${personContext(input.person, input.context)}
 ${input.memo?.trim() ? `\n当日の追加メモ:\n${input.memo.trim()}` : ''}
+
+質問生成のルール:
+- 「まだ確認できていない重要事項」がある場合、questionsは必ずそれを埋める質問にする。汎用質問で埋めない。
+- questionReasonsには、各質問がどの未確認事項を埋めるかを書く（例:「決裁フローが未確認のため」）。
 
 出力するJSONのキーと内容:
 {
@@ -238,6 +247,7 @@ ${input.memo?.trim() ? `\n当日の追加メモ:\n${input.memo.trim()}` : ''}
   "policy": "今日の会話方針（1文）",
   "opening": "最初の一言・入り方",
   "questions": ["今日必ず聞く質問をちょうど3個の配列で"],
+  "questionReasons": ["各質問の根拠をquestionsと同じ順で3個の配列で（どの未確認事項を埋めるか）"],
   "deepQuestions": ["深掘り質問を3個の配列で"],
   "ngActions": ["今日やってはいけない行動を3個の配列で"],
   "sellOrAsk": "今日は売る日か聞く日かの判断（1文）",
@@ -254,12 +264,25 @@ ${input.memo?.trim() ? `\n当日の追加メモ:\n${input.memo.trim()}` : ''}
       }
 
       const name = input.person?.name ?? '相手';
+      const trimmedQuestions = questions.slice(0, 3);
+      // 質問根拠: AI出力を優先し、欠けた分は未解決data_gapsの理由→既定文で補完する。
+      // 「根拠のない質問」をUIに出さないための決定的フォールバック。
+      const openGaps = input.context && input.context.contactId === input.person?.id ? input.context.openGaps : [];
+      const aiReasons = strArray(raw, 'questionReasons');
+      const questionReasons = trimmedQuestions.map((_, index) =>
+        aiReasons[index]?.trim()
+          ? aiReasons[index]
+          : openGaps[index]
+            ? `${openGaps[index].reason}のため`
+            : '未解決の確認事項なし。関係段階に応じた基本質問',
+      );
       return {
         purpose,
         destination: str(raw, 'destination', 'まず周辺課題と人脈の有無を確認する。'),
         policy: str(raw, 'policy', '売り込みではなく、相手の業界理解と情報交換を優先する。'),
         opening: str(raw, 'opening', questions[0]),
-        questions: questions.slice(0, 3),
+        questions: trimmedQuestions,
+        questionReasons,
         deepQuestions: strArray(raw, 'deepQuestions', ['その悩みは、ここ最近強くなっていますか？']),
         ngActions: strArray(raw, 'ngActions', ['相手の状況を聞かずに商品説明を始める']),
         sellOrAsk: str(raw, 'sellOrAsk', '今日は聞く日。本人への提案や紹介依頼はまだ早い。'),
@@ -281,7 +304,7 @@ ${input.memo?.trim() ? `\n当日の追加メモ:\n${input.memo.trim()}` : ''}
 商談・会話の後メモを分析し、人脈カードの更新案をJSONで出力してください。
 
 人脈カード:
-${personContext(input.person)}
+${personContext(input.person, input.context)}
 
 質問への回答:
 ${answers || '（未入力）'}
@@ -304,7 +327,9 @@ ${input.nextTodo || '（未入力）'}
   "feedback": "今日の会話への営業フィードバック（2〜3文）",
   "nextQuestion": "次回聞くべき質問（1文）",
   "lineMessage": "会話のお礼と次につながる自然なLINE文面（2〜3文）",
-  "accumulation": "人脈カードに蓄積する要点の箇条書き（課題・温度感・紹介可能性・決裁/期限/予算の有無・次回連絡。改行区切りの1つの文字列）"
+  "accumulation": "人脈カードに蓄積する要点の箇条書き（課題・温度感・紹介可能性・決裁/期限/予算の有無・次回連絡。改行区切りの1つの文字列）",
+  "unresolvedGaps": ["今回の会話でもまだ確認できていない重要事項を、次の語彙のみで配列にする: ${GAP_TYPES.join(' / ')}（decision_maker=決裁者, budget=予算感, timing=時期, referral_intent=紹介意欲, pain_detail=課題の具体度）"],
+  "resolvedGapTypes": ["今回の会話で確認できた事項を同じ語彙のみで配列にする（なければ空配列）"]
 }`;
 
     return generateValidated(prompt, (raw): AfterMemoAiSuggestion => {
@@ -324,6 +349,10 @@ ${input.nextTodo || '（未入力）'}
         nextQuestion: str(raw, 'nextQuestion', '周りの経営者にも同じ悩みがあるか確認する。'),
         lineMessage: str(raw, 'lineMessage', `${name}さん、今日はありがとうございました。お話に出ていた件、参考になりそうな情報を探してみます。`),
         accumulation: str(raw, 'accumulation', `AIフィードバック：${feedback}`),
+        unresolvedGaps: strArray(raw, 'unresolvedGaps', [])
+          .filter(isGapType)
+          .map((gapType) => ({ gapType })),
+        resolvedGapTypes: strArray(raw, 'resolvedGapTypes', []).filter(isGapType),
       };
     });
   },
@@ -331,10 +360,10 @@ ${input.nextTodo || '（未入力）'}
   async analyzeMessageCheck(input) {
     const prompt = `${COMMON_RULES}
 
-LINE・DMの文面チェック（種別: ${input.checkType}）です。以下の文面と人脈カードを分析し、JSONで出力してください。
+LINE・DMの文面チェック（種別: ${input.checkType}）です。以下の文面と人脈カード・蓄積データを分析し、JSONで出力してください。
 
 人脈カード:
-${personContext(input.person)}
+${personContext(input.person, input.context)}
 
 対象の文面:
 ${input.text}
@@ -422,7 +451,7 @@ ${input.text}
 
 営業パーソンからの相談に、営業コーチとして答えてください。
 
-${input.person ? `相談に関連する人脈カード:\n${personContext(input.person)}\n` : ''}
+${input.person ? `相談に関連する人脈カード:\n${personContext(input.person, input.context)}\n` : ''}
 ${historyText ? `これまでの会話（古い順）:\n${historyText}\n\n上記の会話の続きとして、直近の相談に答えてください。\n` : ''}
 相談内容:
 ${input.problem}

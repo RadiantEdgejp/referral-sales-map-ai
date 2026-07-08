@@ -16,7 +16,7 @@ export const mockProvider: LlmAdapter = {
   },
 
   async createPreMeetingNav(input) {
-    return createPreMeetingNavigation(input.person, input.actionType);
+    return createPreMeetingNavigation(input.person, input.actionType, input.context);
   },
 
   async analyzeAfterMemo(input) {

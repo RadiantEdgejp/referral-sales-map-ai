@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
+import { buildContactAIContext } from '../../ai/aiContext';
 import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
 import type { PreMeetingNavigation } from '../../ai/types';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
@@ -68,10 +69,14 @@ export default function PreMeetingPane({
     setShowNavDetails(false);
     setShowMoreNavActions(false);
     try {
+      // 生成直前にSupabaseから蓄積データ（未解決data_gaps含む）を集約する（CLAUDE.md 6章）。
+      // 「聞くべき質問」はこのcontextの未確認事項を埋める質問として生成される。
+      const context = selectedPerson ? await buildContactAIContext(selectedPerson) : undefined;
       const result = await getLlmAdapter().createPreMeetingNav({
         person: selectedPerson,
         actionType,
         memo,
+        context,
       });
 
       // AI成功時のみ pre_meeting_navs へ永続化する（Issue #17 / CLAUDE.md 4.2）。
@@ -312,9 +317,14 @@ export default function PreMeetingPane({
           <View style={styles.questionPreview}>
             <Text style={styles.questionPreviewTitle}>まず聞く質問</Text>
             {nav.questions.slice(0, 2).map((question, index) => (
-              <Text key={question} style={styles.questionPreviewText}>
-                {index + 1}. {question}
-              </Text>
+              <View key={question}>
+                <Text style={styles.questionPreviewText}>
+                  {index + 1}. {question}
+                </Text>
+                {nav.questionReasons[index] ? (
+                  <Text style={styles.questionReasonText}>この質問の理由：{nav.questionReasons[index]}</Text>
+                ) : null}
+              </View>
             ))}
           </View>
 
@@ -325,7 +335,15 @@ export default function PreMeetingPane({
           {showNavDetails ? (
             <>
               <Info label="今日の会話方針" value={nav.policy} />
-              <Info label="聞くべき質問" value={nav.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')} />
+              <Info
+                label="聞くべき質問"
+                value={nav.questions
+                  .map((question, index) => {
+                    const reason = nav.questionReasons[index] ? `\n　└ 理由：${nav.questionReasons[index]}` : '';
+                    return `${index + 1}. ${question}${reason}`;
+                  })
+                  .join('\n')}
+              />
               <Info label="深掘り質問" value={nav.deepQuestions.map((question) => `・${question}`).join('\n')} />
               <Info label="聞いてはいけないこと" value={nav.ngActions.map((item) => `・${item}`).join('\n')} />
               <Info label="売るべきか、聞くべきか" value={nav.sellOrAsk} />

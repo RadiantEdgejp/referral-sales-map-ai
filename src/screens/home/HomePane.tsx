@@ -1,16 +1,31 @@
-import { useMemo } from 'react';
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import Info from '../../components/Info';
+import MemoField from '../../components/MemoField';
 import MiniButton from '../../components/MiniButton';
 import Route from '../../components/Route';
 import Schedule from '../../components/Schedule';
 import Section from '../../components/Section';
+import { recordReactionEvent } from '../../logic/groundedEvents';
 import { applyNextContact, nextContactDate } from '../../logic/nextContact';
 import { dateValue, formatTime, getDueState } from '../../logic/personPriority';
+import {
+  REACTION_LABELS,
+  REACTION_NEXT_CONTACT_DAYS,
+  type ReactionKind,
+} from '../../logic/relationshipScore';
 import type { TodayAction } from '../../logic/todayActions';
+import { recordInteraction } from '../../storage/interactionLedger';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
 import { homeStyles as styles } from './homeStyles';
+
+const REACTION_OPTIONS: Array<{ kind: ReactionKind; hint: string }> = [
+  { kind: 'positive', hint: '前向き・話が進んだ' },
+  { kind: 'neutral', hint: '普通の反応だった' },
+  { kind: 'no_response', hint: '返事・反応がなかった' },
+  { kind: 'rejected', hint: '断られた・不要と言われた' },
+];
 
 export default function HomePane({
   people,
@@ -38,25 +53,72 @@ export default function HomePane({
   );
   const preMeetingPerson = todaySchedule[0];
 
-  const completeAction = async (item: TodayAction) => {
+  // 完了時のリアクション記録シート（行動＋反応を1操作で台帳に蓄積する）
+  const [reactionTarget, setReactionTarget] = useState<TodayAction | null>(null);
+  const [reactionMemo, setReactionMemo] = useState('');
+  const [recordingReaction, setRecordingReaction] = useState(false);
+
+  const openReactionSheet = (item: TodayAction) => {
+    setReactionMemo('');
+    setReactionTarget(item);
+  };
+
+  const completeWithReaction = async (item: TodayAction, reaction: ReactionKind) => {
     const person = people.find((candidate) => candidate.id === item.personId);
-    if (!person) {
+    if (!person || recordingReaction) {
       return;
     }
 
-    const doneLine = `${formatDateTime(new Date().toISOString())} 優先行動「${item.todayTodo}」を完了`;
-    const { saved, notice } = await applyNextContact(
-      {
-        ...person,
-        additionalMemo: [person.additionalMemo, doneLine].filter(Boolean).join('\n'),
-      },
-      nextContactDate(3),
-    );
-    onPersonUpdated(saved);
-    Alert.alert(
-      '今日の行動を完了にしました',
-      `${notice}\n会話の内容は後メモから入力すると人脈カードに反映されます。`,
-    );
+    setRecordingReaction(true);
+    const reactionLabel = REACTION_LABELS[reaction];
+    const memoText = reactionMemo.trim();
+    const doneLine = `${formatDateTime(new Date().toISOString())} 優先行動「${item.todayTodo}」を完了（反応：${reactionLabel}${memoText ? ` / ${memoText}` : ''}）`;
+
+    try {
+      // 1. 行動＋反応を台帳へ記録し、決定的規則でスコアを更新（根拠つき）
+      const event = await recordReactionEvent({
+        person: {
+          ...person,
+          additionalMemo: [person.additionalMemo, doneLine].filter(Boolean).join('\n'),
+        },
+        action: 'task_completed',
+        reaction,
+        title: `優先行動「${item.todayTodo}」を完了`,
+        summary: memoText || `反応：${reactionLabel}`,
+        sourceType: 'action_task',
+        scale: 'direct',
+      });
+
+      // 2. リアクション種別に応じた次回連絡日ルール（好反応→短め、反応なし→長め）
+      const days = REACTION_NEXT_CONTACT_DAYS[reaction];
+      const { saved, notice } = await applyNextContact(event.saved, nextContactDate(days));
+
+      // 3. 自動提案の理由も台帳に残す（根拠のない日付にしない）
+      await recordInteraction({
+        person: saved,
+        action: 'auto_next_contact',
+        title: '次回連絡日を自動設定',
+        summary: `反応「${reactionLabel}」だったため、規則（${days}日後 9:00）を適用しました。`,
+        sourceType: 'interaction_rule',
+        sourceId: event.ledgerRowId,
+      });
+
+      onPersonUpdated(saved);
+      setReactionTarget(null);
+      Alert.alert(
+        `反応「${reactionLabel}」を記録しました`,
+        [
+          `スコア変動：${event.changeSummary}`,
+          notice,
+          '会話の内容は後メモから入力すると人脈カードに反映されます。',
+        ].join('\n'),
+      );
+    } catch (error) {
+      // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
+      Alert.alert('記録に失敗しました', error instanceof Error ? error.message : '反応の記録中にエラーが発生しました。');
+    } finally {
+      setRecordingReaction(false);
+    }
   };
 
   const postponeAction = async (item: TodayAction) => {
@@ -65,9 +127,20 @@ export default function HomePane({
       return;
     }
 
-    const { saved, notice } = await applyNextContact(person, nextContactDate(1));
-    onPersonUpdated(saved);
-    Alert.alert('明日に延期しました', notice);
+    try {
+      await recordInteraction({
+        person,
+        action: 'postponed',
+        title: `優先行動「${item.todayTodo}」を明日に延期`,
+        summary: '次回連絡日を明日 9:00 に再設定しました。',
+        sourceType: 'action_task',
+      });
+      const { saved, notice } = await applyNextContact(person, nextContactDate(1));
+      onPersonUpdated(saved);
+      Alert.alert('明日に延期しました', notice);
+    } catch (error) {
+      Alert.alert('延期の記録に失敗しました', error instanceof Error ? error.message : '延期の記録中にエラーが発生しました。');
+    }
   };
 
   return (
@@ -92,7 +165,7 @@ export default function HomePane({
               <Text style={styles.todoLine}>今日やること：{item.todayTodo}</Text>
               <View style={styles.rowButtons}>
                 <MiniButton label="詳細" onPress={() => onOpenPerson(item.personId)} />
-                <MiniButton label="完了" onPress={() => completeAction(item)} />
+                <MiniButton label="完了" onPress={() => openReactionSheet(item)} />
                 <MiniButton label="延期" onPress={() => postponeAction(item)} />
               </View>
             </Pressable>
@@ -165,6 +238,56 @@ export default function HomePane({
         <Info label="今週の傾向" value="初回接触はできていますが、会話後に次アクションを決める数が少ないです。" />
         <Info label="今日の改善" value="会話した人は必ず「分類・ゴール・次回連絡日」を決めて終える。" />
       </Section>
+
+      <Modal
+        visible={reactionTarget !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReactionTarget(null)}
+      >
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.personPickerSheet}>
+            <View style={styles.sheetHeader}>
+              <View>
+                <Text style={styles.sheetTitle}>相手の反応はどうでしたか？</Text>
+                <Text style={styles.sheetSubcopy}>
+                  {reactionTarget
+                    ? `${reactionTarget.personName}：${reactionTarget.todayTodo}`
+                    : ''}
+                </Text>
+              </View>
+              <Pressable style={styles.sheetCloseButton} onPress={() => setReactionTarget(null)}>
+                <Text style={styles.sheetCloseText}>閉じる</Text>
+              </Pressable>
+            </View>
+
+            <MemoField
+              label="一言メモ（任意）"
+              value={reactionMemo}
+              onChangeText={setReactionMemo}
+              placeholder="例：資料を見たいと言われた / 既読のまま返信なし"
+            />
+
+            {recordingReaction ? (
+              <View style={styles.loadingBox}>
+                <ActivityIndicator color="#153E75" size="small" />
+                <Text style={styles.loadingText}>反応を記録しています...</Text>
+              </View>
+            ) : (
+              REACTION_OPTIONS.map((option) => (
+                <Pressable
+                  key={option.kind}
+                  style={styles.personSelectCard}
+                  onPress={() => reactionTarget && completeWithReaction(reactionTarget, option.kind)}
+                >
+                  <Text style={styles.personSelectName}>{REACTION_LABELS[option.kind]}</Text>
+                  <Text style={styles.personSelectMeta}>{option.hint}</Text>
+                </Pressable>
+              ))
+            )}
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
