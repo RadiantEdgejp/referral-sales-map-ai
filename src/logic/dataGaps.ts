@@ -67,8 +67,16 @@ export type GapSignals = {
 };
 
 /**
+ * 「予算の話はまだ出ていない」のような否定・未確認の言及。
+ * この語を含む文はキーワードが出ていても「確認済み」の根拠にしない。
+ */
+const NEGATION_MARKERS =
+  /(ない|ておらず|おらず|未確認|未定|不明|わからない|分からない|聞けて|触れて|保留|これから聞)/;
+
+/**
  * 会話テキストからギャップの確認済み/未確認を決定的に判定する。
- * テキストが空（実質会話記録なし）の場合は何も生成しない。
+ * 文単位で評価し、否定文中のキーワード（例:「予算の話はまだ出ていない」）は
+ * 確認済みの根拠として数えない。テキストが空の場合は何も生成しない。
  */
 export function deriveGapSignals(text: string): GapSignals {
   const normalized = text.trim();
@@ -76,10 +84,15 @@ export function deriveGapSignals(text: string): GapSignals {
     return { resolved: [], stillOpen: [] };
   }
 
+  const sentences = normalized.split(/[。\n]/).filter((s) => s.trim());
   const resolved: GapType[] = [];
   const stillOpen: GapType[] = [];
   GAP_TYPES.forEach((gapType) => {
-    if (GAP_DEFINITIONS[gapType].resolvedPattern.test(normalized)) {
+    const pattern = GAP_DEFINITIONS[gapType].resolvedPattern;
+    const hasAffirmativeMention = sentences.some(
+      (sentence) => pattern.test(sentence) && !NEGATION_MARKERS.test(sentence),
+    );
+    if (hasAffirmativeMention) {
       resolved.push(gapType);
     } else {
       stillOpen.push(gapType);

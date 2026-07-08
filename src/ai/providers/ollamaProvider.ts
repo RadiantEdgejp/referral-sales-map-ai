@@ -228,6 +228,19 @@ ${input.memo}
   },
 
   async createPreMeetingNav(input) {
+    // 質問の根拠は生成AIに書かせない。追跡済みのdata_gaps（未解決の確認事項）から
+    // 決定的に導出する。AIの役割は「ギャップiを埋める自然な質問文の作成」だけに限定する。
+    const openGaps = (input.context && input.context.contactId === input.person?.id ? input.context.openGaps : [])
+      .slice(0, 3);
+    const gapInstruction = openGaps.length
+      ? `まだ確認できていない重要事項（この順に対応する質問を作ること）:
+${openGaps.map((gap, i) => `${i + 1}. ${gap.title}（${gap.reason}）`).join('\n')}
+
+質問生成のルール:
+- questionsの${openGaps.length}個目までは、上記の未確認事項を同じ順番で埋める自然な質問にする。汎用質問で埋めない。
+- 質問が3個に満たない分は、関係構築を進める基本質問で補う。`
+      : `未確認事項の記録はまだない。関係段階に応じて、課題・周辺人脈・繋がりたい相手を確認する基本質問を3個作る。`;
+
     const prompt = `${COMMON_RULES}
 
 これから「${input.actionType}」の接触をします。以下の人脈カード情報と蓄積データを参照して、予定前ナビをJSONで出力してください。
@@ -236,9 +249,7 @@ ${input.memo}
 ${personContext(input.person, input.context)}
 ${input.memo?.trim() ? `\n当日の追加メモ:\n${input.memo.trim()}` : ''}
 
-質問生成のルール:
-- 「まだ確認できていない重要事項」がある場合、questionsは必ずそれを埋める質問にする。汎用質問で埋めない。
-- questionReasonsには、各質問がどの未確認事項を埋めるかを書く（例:「決裁フローが未確認のため」）。
+${gapInstruction}
 
 出力するJSONのキーと内容:
 {
@@ -247,7 +258,6 @@ ${input.memo?.trim() ? `\n当日の追加メモ:\n${input.memo.trim()}` : ''}
   "policy": "今日の会話方針（1文）",
   "opening": "最初の一言・入り方",
   "questions": ["今日必ず聞く質問をちょうど3個の配列で"],
-  "questionReasons": ["各質問の根拠をquestionsと同じ順で3個の配列で（どの未確認事項を埋めるか）"],
   "deepQuestions": ["深掘り質問を3個の配列で"],
   "ngActions": ["今日やってはいけない行動を3個の配列で"],
   "sellOrAsk": "今日は売る日か聞く日かの判断（1文）",
@@ -265,16 +275,12 @@ ${input.memo?.trim() ? `\n当日の追加メモ:\n${input.memo.trim()}` : ''}
 
       const name = input.person?.name ?? '相手';
       const trimmedQuestions = questions.slice(0, 3);
-      // 質問根拠: AI出力を優先し、欠けた分は未解決data_gapsの理由→既定文で補完する。
-      // 「根拠のない質問」をUIに出さないための決定的フォールバック。
-      const openGaps = input.context && input.context.contactId === input.person?.id ? input.context.openGaps : [];
-      const aiReasons = strArray(raw, 'questionReasons');
+      // 質問i（i < openGaps数）の根拠は対応する未解決ギャップの理由。
+      // それ以降は基本質問である旨を明示。AIが書いた根拠文は採用しない。
       const questionReasons = trimmedQuestions.map((_, index) =>
-        aiReasons[index]?.trim()
-          ? aiReasons[index]
-          : openGaps[index]
-            ? `${openGaps[index].reason}のため`
-            : '未解決の確認事項なし。関係段階に応じた基本質問',
+        openGaps[index]
+          ? `${openGaps[index].reason}のため`
+          : '未解決の確認事項なし。関係段階に応じた基本質問',
       );
       return {
         purpose,
