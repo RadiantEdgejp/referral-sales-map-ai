@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Archive, Bell, CalendarClock } from 'lucide-react-native';
 import AttachmentTextInput from '../components/AttachmentTextInput';
 import SectionCard from '../components/SectionCard';
@@ -13,6 +13,8 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
   const [person, setPerson] = useState<Person | null>(null);
   const [additionalMemo, setAdditionalMemo] = useState('');
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [companyDraft, setCompanyDraft] = useState('');
+  const [roleDraft, setRoleDraft] = useState('');
 
   const archivePerson = async () => {
     if (!person) {
@@ -35,8 +37,28 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
       const found = people.find((item) => item.id === route.params.personId) ?? null;
       setPerson(found);
       setAdditionalMemo(found?.additionalMemo ?? '');
+      setCompanyDraft(found?.company ?? '');
+      setRoleDraft(found?.role ?? '');
     });
   }, [route.params.personId]);
+
+  const saveCompanyRole = async () => {
+    if (!person) {
+      return;
+    }
+    const updated = {
+      ...person,
+      company: companyDraft.trim() || undefined,
+      role: roleDraft.trim() || undefined,
+    };
+    try {
+      const saved = await updatePerson(updated);
+      setPerson(saved);
+      Alert.alert('会社・役職を保存しました');
+    } catch (error) {
+      Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '会社・役職の保存中にエラーが発生しました。');
+    }
+  };
 
   const createReminderDate = (type: 'tomorrow' | 'threeDays' | 'week' | 'none') => {
     if (type === 'none') {
@@ -100,6 +122,9 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
     <ScrollView style={styles.flex} contentContainerStyle={styles.container}>
       <View style={styles.hero}>
         <Text style={styles.name}>{person.name}</Text>
+        {person.company || person.role ? (
+          <Text style={styles.companyLine}>{[person.company, person.role].filter(Boolean).join('・')}</Text>
+        ) : null}
         <Text style={styles.industry}>{person.industry}</Text>
         <View style={styles.tags}>
           {person.categories.map((category) => (
@@ -109,6 +134,28 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
           ))}
         </View>
       </View>
+
+      <SectionCard title="会社・役職">
+        <Text style={styles.fieldLabel}>会社名</Text>
+        <TextInput
+          value={companyDraft}
+          onChangeText={setCompanyDraft}
+          placeholder="例：〇〇美容室"
+          placeholderTextColor="#94A3B8"
+          style={styles.textField}
+        />
+        <Text style={[styles.fieldLabel, styles.fieldLabelSpaced]}>役職</Text>
+        <TextInput
+          value={roleDraft}
+          onChangeText={setRoleDraft}
+          placeholder="例：代表"
+          placeholderTextColor="#94A3B8"
+          style={styles.textField}
+        />
+        <Pressable style={styles.primaryButton} onPress={saveCompanyRole}>
+          <Text style={styles.primaryButtonText}>会社・役職を保存</Text>
+        </Pressable>
+      </SectionCard>
 
       <Info title="関係性" body={person.relationship} />
       <SectionCard title="可能性スコア">
@@ -275,10 +322,35 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '900',
   },
+  companyLine: {
+    color: '#BFDBFE',
+    fontSize: 14,
+    fontWeight: '800',
+    marginTop: 6,
+  },
   industry: {
     color: '#DBEAFE',
     fontWeight: '700',
     marginTop: 4,
+  },
+  fieldLabel: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  fieldLabelSpaced: {
+    marginTop: 12,
+  },
+  textField: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#D7DEE8',
+    borderRadius: 8,
+    borderWidth: 1,
+    color: '#0F172A',
+    fontSize: 15,
+    minHeight: 46,
+    paddingHorizontal: 12,
   },
   tags: {
     flexDirection: 'row',

@@ -25,6 +25,9 @@ type ContactRow = {
   name: string;
   industry: string;
   relationship: string;
+  company: string | null;
+  role: string | null;
+  introduced_by: string | null;
   classification: PersonCategory[] | null;
   scores: {
     temperatureScore?: number;
@@ -53,7 +56,7 @@ type ContactRow = {
 };
 
 const CONTACT_COLUMNS =
-  'id,user_id,name,industry,relationship,classification,scores,opening_talk,next_question,' +
+  'id,user_id,name,industry,relationship,company,role,introduced_by,classification,scores,opening_talk,next_question,' +
   'current_goal,required_actions,next_step,line_message,email_message,caution,' +
   'recommended_next_contact_at,notes,additional_memo,next_contact_date,notification_id,' +
   'archived_at,created_at,updated_at';
@@ -101,6 +104,9 @@ function rowToPerson(userId: string, row: ContactRow): Person {
     name: row.name,
     industry: row.industry,
     relationship: row.relationship,
+    company: row.company ?? undefined,
+    role: row.role ?? undefined,
+    introducedById: row.introduced_by ? fromRowId(userId, row.introduced_by) : undefined,
     categories: row.classification ?? [],
     temperatureScore: scores.temperatureScore ?? 0,
     customerPotential: scores.customerPotential ?? 0,
@@ -134,6 +140,9 @@ function personToRow(userId: string, person: Person) {
     name: person.name,
     industry: person.industry,
     relationship: person.relationship,
+    company: person.company ?? null,
+    role: person.role ?? null,
+    introduced_by: person.introducedById ? toRowId(userId, person.introducedById) : null,
     classification: person.categories,
     scores: {
       temperatureScore: person.temperatureScore,

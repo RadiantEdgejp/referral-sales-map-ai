@@ -129,6 +129,8 @@ function personContext(person?: Person) {
   if (!person) return '（人脈カード未選択）';
   return [
     `名前: ${person.name}`,
+    person.company ? `会社: ${person.company}` : '',
+    person.role ? `役職: ${person.role}` : '',
     `業種: ${person.industry}`,
     `関係性: ${person.relationship}`,
     `分類: ${person.categories.join('・')}`,

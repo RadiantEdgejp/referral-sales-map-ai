@@ -88,6 +88,8 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           !normalized ||
           [
             person.name,
+            person.company ?? '',
+            person.role ?? '',
             person.industry,
             person.categories.join(' '),
             person.rawMemo,

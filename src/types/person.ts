@@ -36,4 +36,10 @@ export type Person = PersonAnalysis & {
   nextContactAt?: string;
   notificationId?: string;
   additionalMemo?: string;
+  /** 会社名（同姓同名の判別に使う。contacts.company に対応） */
+  company?: string;
+  /** 役職（contacts.role に対応） */
+  role?: string;
+  /** 紹介元のPerson ID（contacts.introduced_by に対応。紹介チェーン表示に使う） */
+  introducedById?: string;
 };
