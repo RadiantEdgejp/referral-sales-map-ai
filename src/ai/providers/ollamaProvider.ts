@@ -413,11 +413,17 @@ ${input.text}
   },
 
   async coachChat(input) {
+    const historyText = (input.history ?? [])
+      .slice(-6)
+      .map((turn) => `相談者: ${turn.question}\nコーチ: ${turn.answer}`)
+      .join('\n---\n');
+
     const prompt = `${COMMON_RULES}
 
 営業パーソンからの相談に、営業コーチとして答えてください。
 
 ${input.person ? `相談に関連する人脈カード:\n${personContext(input.person)}\n` : ''}
+${historyText ? `これまでの会話（古い順）:\n${historyText}\n\n上記の会話の続きとして、直近の相談に答えてください。\n` : ''}
 相談内容:
 ${input.problem}
 

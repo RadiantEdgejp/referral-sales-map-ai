@@ -190,6 +190,57 @@ export async function saveCoachLog(input: {
   return rowId;
 }
 
+export type CoachLogEntry = {
+  /** coach_logs.id（名前空間付きの行ID） */
+  rowId: string;
+  question: string;
+  answer: string;
+  /** 科学的根拠（coach_logs.advice） */
+  advice: string;
+  nextAction: string;
+  createdAt: string;
+};
+
+/**
+ * 選択中の人物の直近の営業コーチ履歴を取得する（CLAUDE.md 5.7）。
+ * personId 未指定の場合は「人物に紐付かない相談」（contact_id が null）を返す。
+ * 古い順（会話表示順）で返す。
+ */
+export async function getCoachLogs(personId: string | undefined, limit = 30): Promise<CoachLogEntry[]> {
+  const userId = await requireUserId();
+
+  let query = supabase
+    .from('coach_logs')
+    .select('id,question,answer,advice,next_action,created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  query = personId ? query.eq('contact_id', toContactRowId(userId, personId)) : query.is('contact_id', null);
+
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(`営業コーチ履歴の取得に失敗しました: ${error.message}`);
+  }
+
+  return ((data ?? []) as Array<{
+    id: string;
+    question: string;
+    answer: string;
+    advice: string;
+    next_action: string;
+    created_at: string;
+  }>)
+    .map((row) => ({
+      rowId: row.id,
+      question: row.question,
+      answer: row.answer,
+      advice: row.advice,
+      nextAction: row.next_action,
+      createdAt: row.created_at,
+    }))
+    .reverse();
+}
+
 export type EndOfDayCheckSnapshot = {
   updatedContactNames: string[];
   memoMissingNames: string[];

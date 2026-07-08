@@ -88,6 +88,11 @@ export type LineCheckAnalysis = {
 export type CoachChatInput = {
   problem: string;
   person?: Person;
+  /**
+   * 直近の会話履歴（古い順）。マルチターンの文脈維持に使う（CLAUDE.md 5.7）。
+   * 省略時は単発相談として扱う（後方互換）。
+   */
+  history?: Array<{ question: string; answer: string }>;
 };
 
 export type CoachAnswer = {
