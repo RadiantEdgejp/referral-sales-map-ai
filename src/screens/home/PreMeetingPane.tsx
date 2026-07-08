@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
 import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
 import type { PreMeetingNavigation } from '../../ai/types';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
+import ContactPickerModal from '../../components/ContactPickerModal';
 import FilterChip from '../../components/FilterChip';
 import Info from '../../components/Info';
 import Section from '../../components/Section';
@@ -44,7 +45,6 @@ export default function PreMeetingPane({
   const [generating, setGenerating] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [copyNotice, setCopyNotice] = useState(false);
-  const [personQuery, setPersonQuery] = useState('');
   const [showReferenceDetails, setShowReferenceDetails] = useState(false);
   const [showNavDetails, setShowNavDetails] = useState(false);
   const [personPickerOpen, setPersonPickerOpen] = useState(false);
@@ -57,19 +57,6 @@ export default function PreMeetingPane({
   }, [initialPersonId, selectedPersonId, uniquePeople]);
 
   const currentPersonId = selectedPerson?.id ?? selectedPersonId;
-  const candidatePeople = useMemo(() => {
-    const normalized = personQuery.trim().toLowerCase();
-    const matches = normalized
-      ? uniquePeople.filter((person) =>
-          [person.name, person.industry, person.relationship, person.categories.join(' '), person.nextAction, person.rawMemo]
-            .join(' ')
-            .toLowerCase()
-            .includes(normalized),
-        )
-      : uniquePeople;
-
-    return dedupePeople(matches).slice(0, 20);
-  }, [personQuery, uniquePeople]);
 
   const generateNav = async () => {
     if (generating) return;
@@ -191,7 +178,12 @@ export default function PreMeetingPane({
             <Text style={styles.selectedSummaryLabel}>選択中</Text>
             <Text style={styles.selectedSummaryName}>{selectedPerson.name}</Text>
             <Text style={styles.selectedSummaryMeta}>
-              {selectedPerson.industry} / {selectedPerson.relationship}
+              {[
+                [selectedPerson.company, selectedPerson.role].filter(Boolean).join('・'),
+                `${selectedPerson.industry} / ${selectedPerson.relationship}`,
+              ]
+                .filter(Boolean)
+                .join('｜')}
             </Text>
             <Text style={styles.selectedSummaryAction}>今日の焦点：{selectedPerson.nextAction}</Text>
           </View>
@@ -203,73 +195,25 @@ export default function PreMeetingPane({
         </Pressable>
       </Section>
 
-      <Modal visible={personPickerOpen} transparent animationType="slide" onRequestClose={() => setPersonPickerOpen(false)}>
-        <View style={styles.sheetBackdrop}>
-          <View style={styles.personPickerSheet}>
-            <View style={styles.sheetHeader}>
-              <View>
-                <Text style={styles.sheetTitle}>相手を検索</Text>
-                <Text style={styles.sheetSubcopy}>名前・業種・関係性・メモから探せます。</Text>
-              </View>
-              <Pressable style={styles.sheetCloseButton} onPress={() => setPersonPickerOpen(false)}>
-                <Text style={styles.sheetCloseText}>閉じる</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.searchBox}>
-              <Search color="#64748B" size={18} />
-              <TextInput
-                value={personQuery}
-                onChangeText={setPersonQuery}
-                placeholder="相手を検索"
-                placeholderTextColor="#94A3B8"
-                style={styles.searchInput}
-              />
-            </View>
-
-            <Text style={styles.resultHint}>候補 {candidatePeople.length}件</Text>
-            <ScrollView style={styles.personPickerList} showsVerticalScrollIndicator={false}>
-              {candidatePeople.length > 0 ? (
-                candidatePeople.map((person) => {
-                  const selected = person.id === currentPersonId;
-                  return (
-                    <Pressable
-                      key={person.id}
-                      style={[styles.personSelectCard, selected && styles.personSelectCardActive]}
-                      onPress={() => {
-                        setSelectedPersonId(person.id);
-                        setNav(null);
-                        setNavRowId(undefined);
-                        setErrorMessage('');
-                        setCopyNotice(false);
-                        setShowReferenceDetails(false);
-                        setShowNavDetails(false);
-                        setShowMoreNavActions(false);
-                        setPersonPickerOpen(false);
-                      }}
-                    >
-                      <View style={styles.personSelectTop}>
-                        <Text style={styles.personSelectName}>{person.name}</Text>
-                        {selected ? <Text style={styles.selectedMark}>選択中</Text> : null}
-                      </View>
-                      <Text style={styles.personSelectMeta}>
-                        {person.industry} / {person.relationship}
-                      </Text>
-                      <Text style={styles.personSelectTags}>分類：{person.categories.join('・')}</Text>
-                      <Text style={styles.personSelectAction}>次アクション：{person.nextAction}</Text>
-                    </Pressable>
-                  );
-                })
-              ) : (
-                <View style={styles.emptyPickerState}>
-                  <Text style={styles.emptyTitle}>候補が見つかりません。</Text>
-                  <Text style={styles.emptyText}>名前、業種、関係性、メモの一部で検索してみてください。</Text>
-                </View>
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      <ContactPickerModal
+        visible={personPickerOpen}
+        people={uniquePeople}
+        selectedPersonId={currentPersonId}
+        onClose={() => setPersonPickerOpen(false)}
+        onSelect={(person) => {
+          if (person) {
+            setSelectedPersonId(person.id);
+            setNav(null);
+            setNavRowId(undefined);
+            setErrorMessage('');
+            setCopyNotice(false);
+            setShowReferenceDetails(false);
+            setShowNavDetails(false);
+            setShowMoreNavActions(false);
+          }
+          setPersonPickerOpen(false);
+        }}
+      />
 
       <Section title="アクション種別を選ぶ">
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>

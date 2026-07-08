@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
 import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
 import type { LineCheckAnalysis } from '../../ai/types';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
+import ContactPickerModal from '../../components/ContactPickerModal';
 import FilterChip from '../../components/FilterChip';
 import Section from '../../components/Section';
 import {
@@ -12,7 +13,6 @@ import {
   LINE_NOTICE_OPTIONS,
   LINE_PERSON_FILTERS,
   getLineCheckTypeGuide,
-  getLinePersonStatus,
   matchesLinePersonFilter,
   type LineCheckType,
   type LinePersonFilter,
@@ -42,8 +42,6 @@ export default function LineCheckPane({
 }) {
   const [selectedPersonId, setSelectedPersonId] = useState(personId);
   const [personPickerOpen, setPersonPickerOpen] = useState(false);
-  const [personQuery, setPersonQuery] = useState('');
-  const [personFilter, setPersonFilter] = useState<LinePersonFilter>('最近やり取り');
   const [checkType, setCheckType] = useState<LineCheckType>('受信文チェック');
   const [messageText, setMessageText] = useState('');
   const [analysis, setAnalysis] = useState<LineCheckAnalysis | null>(null);
@@ -59,22 +57,6 @@ export default function LineCheckPane({
     () => candidates.find((person) => person.id === currentPersonId) ?? candidates[0],
     [candidates, currentPersonId],
   );
-  const filteredCandidates = useMemo(() => {
-    const normalized = personQuery.trim().toLowerCase();
-
-    return candidates.filter((person) => {
-      const matchesQuery =
-        !normalized ||
-        [person.name, person.industry, person.relationship, person.rawMemo, person.nextAction, person.cautions]
-          .join(' ')
-          .toLowerCase()
-          .includes(normalized);
-      const matchesFilter = matchesLinePersonFilter(person, personFilter);
-
-      return matchesQuery && matchesFilter;
-    });
-  }, [candidates, personFilter, personQuery]);
-
   const typeGuide = getLineCheckTypeGuide(checkType);
 
   const resetResult = () => {
@@ -238,7 +220,12 @@ export default function LineCheckPane({
             <Text style={styles.selectedSummaryLabel}>選択中</Text>
             <Text style={styles.selectedSummaryName}>{selectedPerson.name}</Text>
             <Text style={styles.selectedSummaryMeta}>
-              {selectedPerson.industry} / {selectedPerson.categories.join(' / ')}
+              {[
+                [selectedPerson.company, selectedPerson.role].filter(Boolean).join('・'),
+                `${selectedPerson.industry} / ${selectedPerson.categories.join(' / ')}`,
+              ]
+                .filter(Boolean)
+                .join('｜')}
             </Text>
             <Text style={styles.selectedSummaryAction}>次アクション：{selectedPerson.nextAction}</Text>
           </View>
@@ -249,71 +236,24 @@ export default function LineCheckPane({
         </Pressable>
       </Section>
 
-      <Modal visible={personPickerOpen} transparent animationType="slide" onRequestClose={() => setPersonPickerOpen(false)}>
-        <View style={styles.sheetBackdrop}>
-          <View style={styles.personPickerSheet}>
-            <View style={styles.sheetHeader}>
-              <View>
-                <Text style={styles.sheetTitle}>相手を検索</Text>
-                <Text style={styles.sheetSubcopy}>名前・業種・メモで検索できます。</Text>
-              </View>
-              <Pressable style={styles.sheetCloseButton} onPress={() => setPersonPickerOpen(false)}>
-                <Text style={styles.sheetCloseText}>閉じる</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.searchBox}>
-              <Search color="#64748B" size={18} />
-              <TextInput
-                value={personQuery}
-                onChangeText={setPersonQuery}
-                placeholder="名前・業種・メモで検索"
-                placeholderTextColor="#94A3B8"
-                style={styles.searchInput}
-              />
-            </View>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
-              {LINE_PERSON_FILTERS.map((item) => (
-                <FilterChip key={item} label={item} selected={personFilter === item} onPress={() => setPersonFilter(item)} />
-              ))}
-            </ScrollView>
-
-            <Text style={styles.resultHint}>候補 {filteredCandidates.length}件</Text>
-            <ScrollView style={styles.personPickerList} showsVerticalScrollIndicator={false}>
-              {filteredCandidates.map((person) => {
-                const selected = person.id === selectedPerson?.id;
-                return (
-                  <Pressable
-                    key={person.id}
-                    style={[styles.personSelectCard, selected && styles.personSelectCardActive]}
-                    onPress={() => {
-                      setSelectedPersonId(person.id);
-                      resetResult();
-                      setPersonPickerOpen(false);
-                    }}
-                  >
-                    <View style={styles.personSelectTop}>
-                      <Text style={styles.personSelectName}>{person.name}</Text>
-                      {selected ? <Text style={styles.selectedMark}>選択中</Text> : null}
-                    </View>
-                    <Text style={styles.personSelectMeta}>
-                      {person.industry}｜{getLinePersonStatus(person)}｜{person.categories[0]}
-                    </Text>
-                    <Text style={styles.personSelectAction}>次アクション：{person.nextAction}</Text>
-                  </Pressable>
-                );
-              })}
-              {filteredCandidates.length === 0 ? (
-                <View style={styles.emptyPickerState}>
-                  <Text style={styles.emptyTitle}>候補が見つかりません。</Text>
-                  <Text style={styles.emptyText}>名前、業種、メモ本文、次アクションの一部で検索してみてください。</Text>
-                </View>
-              ) : null}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      <ContactPickerModal
+        visible={personPickerOpen}
+        people={candidates}
+        selectedPersonId={selectedPerson?.id}
+        onClose={() => setPersonPickerOpen(false)}
+        filter={{
+          options: LINE_PERSON_FILTERS,
+          initial: '最近やり取り',
+          matches: (person, option) => matchesLinePersonFilter(person, option as LinePersonFilter),
+        }}
+        onSelect={(person) => {
+          if (person) {
+            setSelectedPersonId(person.id);
+            resetResult();
+          }
+          setPersonPickerOpen(false);
+        }}
+      />
 
       <Section title="チェック種別" subtitle="基本は受信文チェックのままでOK。必要な時だけ切り替えます。">
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
