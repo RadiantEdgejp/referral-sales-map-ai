@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Archive, Bell, CalendarClock } from 'lucide-react-native';
+import { Archive, Bell, CalendarClock, ChevronRight, Share2 } from 'lucide-react-native';
 import AttachmentTextInput from '../components/AttachmentTextInput';
+import ContactPickerModal from '../components/ContactPickerModal';
 import SectionCard from '../components/SectionCard';
 import { cancelContactNotification, scheduleContactNotification } from '../notifications/notificationService';
 import { getPeople, updatePerson } from '../storage/personStorage';
@@ -15,6 +16,8 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [companyDraft, setCompanyDraft] = useState('');
   const [roleDraft, setRoleDraft] = useState('');
+  const [allPeople, setAllPeople] = useState<Person[]>([]);
+  const [introducerPickerOpen, setIntroducerPickerOpen] = useState(false);
 
   const archivePerson = async () => {
     if (!person) {
@@ -35,12 +38,38 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
   useEffect(() => {
     getPeople().then((people) => {
       const found = people.find((item) => item.id === route.params.personId) ?? null;
+      setAllPeople(people);
       setPerson(found);
       setAdditionalMemo(found?.additionalMemo ?? '');
       setCompanyDraft(found?.company ?? '');
       setRoleDraft(found?.role ?? '');
     });
   }, [route.params.personId]);
+
+  // 紹介チェーン（contacts.introduced_by）：紹介元と、この人から紹介された人
+  const introducer = person?.introducedById
+    ? allPeople.find((item) => item.id === person.introducedById) ?? null
+    : null;
+  const referredPeople = person
+    ? allPeople.filter((item) => item.introducedById === person.id && !item.archivedAt)
+    : [];
+
+  const saveIntroducer = async (introducedBy: Person | null) => {
+    setIntroducerPickerOpen(false);
+    if (!person) {
+      return;
+    }
+    try {
+      const saved = await updatePerson({ ...person, introducedById: introducedBy?.id });
+      setPerson(saved);
+      Alert.alert(
+        '紹介元を更新しました',
+        introducedBy ? `${introducedBy.name}からの紹介として記録しました。` : '紹介元の設定を解除しました。',
+      );
+    } catch (error) {
+      Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '紹介元の保存中にエラーが発生しました。');
+    }
+  };
 
   const saveCompanyRole = async () => {
     if (!person) {
@@ -157,6 +186,57 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
         </Pressable>
       </SectionCard>
 
+      <SectionCard title="紹介チェーン">
+        <View style={styles.chainHeader}>
+          <Share2 color="#153E75" size={16} />
+          <Text style={styles.chainHint}>誰の紹介でつながり、誰へ広がったかを記録します。</Text>
+        </View>
+
+        <Text style={styles.fieldLabel}>紹介元（この人を紹介してくれた人）</Text>
+        {introducer ? (
+          <Pressable
+            style={styles.chainCard}
+            onPress={() => navigation.push('PersonDetail', { personId: introducer.id })}
+          >
+            <View style={styles.chainCardBody}>
+              <Text style={styles.chainName}>{introducer.name}</Text>
+              <Text style={styles.chainMeta}>
+                {[introducer.company, introducer.role].filter(Boolean).join('・') || introducer.industry}
+              </Text>
+            </View>
+            <ChevronRight color="#94A3B8" size={18} />
+          </Pressable>
+        ) : (
+          <Text style={styles.chainEmpty}>
+            {person.introducedById ? '紹介元の人物が見つかりません（アーカイブ済みの可能性）。' : 'まだ設定されていません。'}
+          </Text>
+        )}
+        <Pressable style={styles.chainSetButton} onPress={() => setIntroducerPickerOpen(true)}>
+          <Text style={styles.chainSetButtonText}>{introducer ? '紹介元を変更する' : '紹介元を設定する'}</Text>
+        </Pressable>
+
+        <Text style={[styles.fieldLabel, styles.fieldLabelSpaced]}>この人から紹介された人（{referredPeople.length}人）</Text>
+        {referredPeople.length > 0 ? (
+          referredPeople.map((referred) => (
+            <Pressable
+              key={referred.id}
+              style={styles.chainCard}
+              onPress={() => navigation.push('PersonDetail', { personId: referred.id })}
+            >
+              <View style={styles.chainCardBody}>
+                <Text style={styles.chainName}>{referred.name}</Text>
+                <Text style={styles.chainMeta}>
+                  {[referred.company, referred.role].filter(Boolean).join('・') || referred.industry}
+                </Text>
+              </View>
+              <ChevronRight color="#94A3B8" size={18} />
+            </Pressable>
+          ))
+        ) : (
+          <Text style={styles.chainEmpty}>まだいません。新しく追加した人の「紹介元」にこの人を設定すると、ここに表示されます。</Text>
+        )}
+      </SectionCard>
+
       <Info title="関係性" body={person.relationship} />
       <SectionCard title="可能性スコア">
         <Score label="顧客可能性" value={person.customerPotential} />
@@ -228,6 +308,19 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
           <Text style={styles.archiveButtonText}>アーカイブする</Text>
         </Pressable>
       </SectionCard>
+
+      <ContactPickerModal
+        visible={introducerPickerOpen}
+        people={allPeople}
+        selectedPersonId={person.introducedById}
+        excludePersonId={person.id}
+        allowNone
+        noneLabel="紹介元なし（設定を解除する）"
+        title="紹介元を選ぶ"
+        subtitle={`${person.name}を紹介してくれた人を選びます。`}
+        onClose={() => setIntroducerPickerOpen(false)}
+        onSelect={saveIntroducer}
+      />
 
       <Modal
         visible={archiveConfirmOpen}
@@ -351,6 +444,65 @@ const styles = StyleSheet.create({
     fontSize: 15,
     minHeight: 46,
     paddingHorizontal: 12,
+  },
+  chainHeader: {
+    alignItems: 'center',
+    backgroundColor: '#EAF2FF',
+    borderRadius: 8,
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+    padding: 10,
+  },
+  chainHint: {
+    color: '#153E75',
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 17,
+  },
+  chainCard: {
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+    padding: 12,
+  },
+  chainCardBody: { flex: 1 },
+  chainName: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  chainMeta: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  chainEmpty: {
+    color: '#94A3B8',
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 8,
+  },
+  chainSetButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 42,
+  },
+  chainSetButtonText: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '900',
   },
   tags: {
     flexDirection: 'row',
