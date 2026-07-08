@@ -10,10 +10,12 @@ import Info from '../../components/Info';
 import Section from '../../components/Section';
 import { dedupePeople } from '../../logic/personPriority';
 import { getActionGuidance } from '../../logic/preMeetingNav';
+import { savePreMeetingNav } from '../../storage/flowLogStorage';
 import { updatePerson } from '../../storage/personStorage';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
 import { homeStyles as styles } from './homeStyles';
+import type { AfterMemoHandoff } from './types';
 
 export default function PreMeetingPane({
   people,
@@ -27,7 +29,7 @@ export default function PreMeetingPane({
 }: {
   people: Person[];
   initialPersonId?: string;
-  onAfter: (personId?: string) => void;
+  onAfter: (personId?: string, handoff?: AfterMemoHandoff) => void;
   onLine: (personId?: string) => void;
   onPersonUpdated: (person: Person) => void;
   onAddPerson: () => void;
@@ -38,6 +40,7 @@ export default function PreMeetingPane({
   const [actionType, setActionType] = useState('情報交換前');
   const [memo, setMemo] = useState('');
   const [nav, setNav] = useState<PreMeetingNavigation | null>(null);
+  const [navRowId, setNavRowId] = useState<string | undefined>(undefined);
   const [generating, setGenerating] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [copyNotice, setCopyNotice] = useState(false);
@@ -83,11 +86,27 @@ export default function PreMeetingPane({
         actionType,
         memo,
       });
+
+      // AI成功時のみ pre_meeting_navs へ永続化する（Issue #17 / CLAUDE.md 4.2）。
+      // 保存に失敗した場合は成功扱いにせず、エラーとして表示する。
+      let savedRowId: string | undefined;
+      if (selectedPerson) {
+        const saved = await savePreMeetingNav({
+          person: selectedPerson,
+          actionType,
+          memo,
+          nav: result,
+        });
+        savedRowId = saved.rowId;
+      }
+
       setNav(result);
+      setNavRowId(savedRowId);
     } catch (error) {
-      // AI失敗時はナビを表示せず、保存操作もできない状態を維持する
+      // AI失敗・保存失敗時はナビを表示せず、後メモへの引き継ぎもできない状態を維持する
       setNav(null);
-      setErrorMessage(toLlmErrorMessage(error));
+      setNavRowId(undefined);
+      setErrorMessage(error instanceof Error && !('kind' in error) ? error.message : toLlmErrorMessage(error));
     } finally {
       setGenerating(false);
     }
@@ -101,6 +120,15 @@ export default function PreMeetingPane({
   };
 
   const goAfterMemo = () => {
+    // ナビで決めた質問を後メモへそのまま引き継ぐ（CLAUDE.md 5.4）
+    if (nav && currentPersonId) {
+      onAfter(currentPersonId, {
+        questions: nav.questions,
+        preMeetingNavRowId: navRowId,
+        personId: currentPersonId,
+      });
+      return;
+    }
     onAfter(currentPersonId);
   };
 
@@ -211,6 +239,7 @@ export default function PreMeetingPane({
                       onPress={() => {
                         setSelectedPersonId(person.id);
                         setNav(null);
+                        setNavRowId(undefined);
                         setErrorMessage('');
                         setCopyNotice(false);
                         setShowReferenceDetails(false);
@@ -252,6 +281,7 @@ export default function PreMeetingPane({
               onPress={() => {
                 setActionType(item);
                 setNav(null);
+                setNavRowId(undefined);
                 setErrorMessage('');
                 setCopyNotice(false);
                 setShowMoreNavActions(false);

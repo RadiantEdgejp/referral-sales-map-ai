@@ -19,6 +19,7 @@ import {
 } from '../../logic/lineCheck';
 import { dedupePeople } from '../../logic/personPriority';
 import { cancelContactNotification, scheduleContactNotification } from '../../notifications/notificationService';
+import { saveMessageCheck } from '../../storage/flowLogStorage';
 import { updatePerson } from '../../storage/personStorage';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
@@ -133,17 +134,30 @@ export default function LineCheckPane({
       `注意点：${analysis.caution}`,
     ].join('\n');
 
-    const saved = await updatePerson({
-      ...selectedPerson,
-      nextAction: analysis.nextAction,
-      nextQuestion: analysis.nextQuestion,
-      lineMessage: analysis.replyDraft,
-      cautions: analysis.caution,
-      additionalMemo: [selectedPerson.additionalMemo, memo].filter(Boolean).join('\n\n'),
-    });
-    onPersonUpdated(saved);
-    setSavedNotice(true);
-    Alert.alert('人脈カードに保存しました', 'LINE・DMの内容から抽出した営業データを人脈カードに蓄積しました。');
+    try {
+      // 分析結果を message_checks に永続化してから、人脈カードへ反映する（Issue #17）
+      await saveMessageCheck({
+        person: selectedPerson,
+        checkType,
+        text: messageText,
+        analysis,
+      });
+
+      const saved = await updatePerson({
+        ...selectedPerson,
+        nextAction: analysis.nextAction,
+        nextQuestion: analysis.nextQuestion,
+        lineMessage: analysis.replyDraft,
+        cautions: analysis.caution,
+        additionalMemo: [selectedPerson.additionalMemo, memo].filter(Boolean).join('\n\n'),
+      });
+      onPersonUpdated(saved);
+      setSavedNotice(true);
+      Alert.alert('人脈カードに保存しました', 'LINE・DMの内容から抽出した営業データを人脈カードに蓄積しました。');
+    } catch (error) {
+      // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
+      Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '文面確認の保存中にエラーが発生しました。');
+    }
   };
 
   const sendToAfterMemo = () => {

@@ -44,6 +44,8 @@ export async function createAutoFollowUp(input: AutoFollowUpInput): Promise<Auto
   const interactionLogId = toContactRowId(userId, `${person.id}-followup-log`);
   const dueIso = dueDate.toISOString();
   const nextStep = person.nextAction || '次回連絡の内容を決めて接触する';
+  // 名前が既に「〜さん」で終わる場合に「さんさん」と重複しないようにする
+  const honorificName = person.name.endsWith('さん') ? person.name : `${person.name}さん`;
 
   const { error: taskError } = await supabase.from('action_tasks').insert({
     id: actionTaskId,
@@ -51,7 +53,7 @@ export async function createAutoFollowUp(input: AutoFollowUpInput): Promise<Auto
     contact_id: contactRowId,
     sales_route_id: null,
     calendar_event_id: null,
-    title: `${person.name}さんへフォローアップ連絡`,
+    title: `${honorificName}へフォローアップ連絡`,
     action_type: FOLLOW_UP_ACTION_TYPE,
     priority: '重要',
     reason,
@@ -73,7 +75,7 @@ export async function createAutoFollowUp(input: AutoFollowUpInput): Promise<Auto
     sales_route_id: null,
     calendar_event_id: null,
     action_task_id: actionTaskId,
-    title: `${person.name}さんに連絡する日です`,
+    title: `${honorificName}に連絡する日です`,
     body: nextStep,
     scheduled_at: dueIso,
     status: 'scheduled',

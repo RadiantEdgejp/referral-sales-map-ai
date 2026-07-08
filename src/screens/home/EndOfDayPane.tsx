@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import Info from '../../components/Info';
 import Section from '../../components/Section';
 import { getDueState, priorityScore } from '../../logic/personPriority';
 import { scheduleContactNotification } from '../../notifications/notificationService';
+import { saveEndOfDayCheck } from '../../storage/flowLogStorage';
 import { updatePerson } from '../../storage/personStorage';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
@@ -39,6 +40,7 @@ export default function EndOfDayPane({
   onCoach: (initialPrompt: string) => void;
 }) {
   const [completed, setCompleted] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [reminderTarget, setReminderTarget] = useState<Person | null>(null);
   const [reminderNotice, setReminderNotice] = useState('');
 
@@ -244,8 +246,38 @@ export default function EndOfDayPane({
         </Pressable>
       </Section>
 
-      <Pressable style={styles.fullPrimaryButton} onPress={() => setCompleted(true)}>
-        <Text style={styles.fullPrimaryText}>終業後チェックを完了する</Text>
+      <Pressable
+        style={[styles.fullPrimaryButton, saving && styles.buttonDisabled]}
+        disabled={saving}
+        onPress={async () => {
+          if (saving) return;
+          setSaving(true);
+          try {
+            // 終業後チェックのスナップショットを end_of_day_checks へ永続化する（Issue #17）
+            await saveEndOfDayCheck({
+              updatedContactNames: updatedToday.map((person) => person.name),
+              memoMissingNames: memoMissing.map((person) => person.name),
+              contactDateMissingNames: contactDateMissing.map((person) => person.name),
+              actionMissingNames: actionMissing.map((person) => person.name),
+              overdueNames: overduePeople.map((person) => person.name),
+              tomorrowPriorities: tomorrowPriorities.map(
+                (person) => `${person.name}：${person.nextAction || '次アクションを決める'}`,
+              ),
+              feedback:
+                gapCount > 0
+                  ? `入力漏れのある人脈カードが${gapCount}件。後メモ未入力${memoMissing.length}件、次回連絡日未設定${contactDateMissing.length}件、次アクション未設定${actionMissing.length}件。`
+                  : '入力漏れなし。',
+            });
+            setCompleted(true);
+          } catch (error) {
+            // 保存に失敗した場合は完了扱いにしない（CLAUDE.md 4.2）
+            Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '終業後チェックの保存中にエラーが発生しました。');
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        <Text style={styles.fullPrimaryText}>{saving ? '保存中...' : '終業後チェックを完了する'}</Text>
       </Pressable>
       {completed ? <Text style={styles.successNotice}>終業後チェックを完了しました。ホームは常に最新の人脈カードから生成されます。</Text> : null}
       {reminderNotice ? <Text style={styles.successNotice}>{reminderNotice}</Text> : null}

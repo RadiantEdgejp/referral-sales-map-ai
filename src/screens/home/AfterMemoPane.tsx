@@ -7,11 +7,13 @@ import MemoField from '../../components/MemoField';
 import Section from '../../components/Section';
 import { createAfterMemoQuestions } from '../../logic/afterMemo';
 import { scheduleContactNotification } from '../../notifications/notificationService';
+import { saveAfterMemo } from '../../storage/flowLogStorage';
 import { updatePerson } from '../../storage/personStorage';
 import type { AfterMemoAiSuggestion } from '../../types/aiAnalysis';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
 import { homeStyles as styles } from './homeStyles';
+import type { AfterMemoHandoff } from './types';
 
 function timingLabelToDays(label: string) {
   if (label.includes('明日')) return 1;
@@ -22,6 +24,7 @@ function timingLabelToDays(label: string) {
 export default function AfterMemoPane({
   people,
   personId,
+  handoff,
   onPersonUpdated,
   onLine,
   onEnd,
@@ -30,6 +33,7 @@ export default function AfterMemoPane({
 }: {
   people: Person[];
   personId?: string;
+  handoff?: AfterMemoHandoff;
   onPersonUpdated: (person: Person) => void;
   onLine: (personId?: string) => void;
   onEnd: () => void;
@@ -37,7 +41,13 @@ export default function AfterMemoPane({
   onCoach: (initialPrompt: string) => void;
 }) {
   const person = useMemo(() => people.find((item) => item.id === personId) ?? people[0], [people, personId]);
-  const questions = useMemo(() => createAfterMemoQuestions(person), [person]);
+  // 予定前ナビからの引き継ぎ質問を最優先で使う（CLAUDE.md 5.4）。
+  // 別人物の引き継ぎが残っている場合は使わない（AIContext混入防止）。
+  const activeHandoff = handoff && person && handoff.personId === person.id ? handoff : undefined;
+  const questions = useMemo(
+    () => (activeHandoff && activeHandoff.questions.length > 0 ? activeHandoff.questions : createAfterMemoQuestions(person)),
+    [activeHandoff, person],
+  );
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [talkMemo, setTalkMemo] = useState('');
   const [allInfoMemo, setAllInfoMemo] = useState('');
@@ -100,17 +110,34 @@ export default function AfterMemoPane({
       `AIフィードバック：${suggestion.feedback}`,
     ];
 
-    const saved = await updatePerson({
-      ...person,
-      goal: suggestion.goal,
-      nextAction: suggestion.nextAction,
-      nextQuestion: suggestion.nextQuestion,
-      lineMessage: suggestion.lineMessage,
-      additionalMemo: [person.additionalMemo, memoLines.join('\n')].filter(Boolean).join('\n\n'),
-    });
-    onPersonUpdated(saved);
-    setUpdatedNotice(true);
-    Alert.alert('人脈カードを更新しました', '後メモの内容を人脈カードに蓄積しました。');
+    try {
+      // 後メモ本体を after_memos に永続化してから、人脈カードへ反映する（Issue #17）
+      await saveAfterMemo({
+        person,
+        questions,
+        answers,
+        talkMemo,
+        allInfoMemo,
+        nextTodo,
+        suggestion,
+        preMeetingNavRowId: activeHandoff?.preMeetingNavRowId,
+      });
+
+      const saved = await updatePerson({
+        ...person,
+        goal: suggestion.goal,
+        nextAction: suggestion.nextAction,
+        nextQuestion: suggestion.nextQuestion,
+        lineMessage: suggestion.lineMessage,
+        additionalMemo: [person.additionalMemo, memoLines.join('\n')].filter(Boolean).join('\n\n'),
+      });
+      onPersonUpdated(saved);
+      setUpdatedNotice(true);
+      Alert.alert('人脈カードを更新しました', '後メモの内容を人脈カードに蓄積しました。');
+    } catch (error) {
+      // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
+      Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '後メモの保存中にエラーが発生しました。');
+    }
   };
 
   const scheduleNextContact = async () => {

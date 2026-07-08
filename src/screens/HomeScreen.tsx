@@ -26,7 +26,7 @@ import LineCheckPane from './home/LineCheckPane';
 import PeoplePane from './home/PeoplePane';
 import PreMeetingPane from './home/PreMeetingPane';
 import { homeStyles as styles } from './home/homeStyles';
-import type { MainTab } from './home/types';
+import type { AfterMemoHandoff, MainTab } from './home/types';
 
 const NAV_ITEMS: Array<{ tab: MainTab; Icon: LucideIcon; label: string; hint: string }> = [
   { tab: 'home', Icon: House, label: 'ホーム', hint: 'ホーム' },
@@ -49,6 +49,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
   const [sortMode, setSortMode] = useState<SortMode>('priority');
   const [planUpdated, setPlanUpdated] = useState(false);
   const [focusPersonId, setFocusPersonId] = useState<string | undefined>(undefined);
+  const [afterHandoff, setAfterHandoff] = useState<AfterMemoHandoff | undefined>(undefined);
 
   const loadPeople = useCallback(async () => {
     const stored = await getPeople();
@@ -169,7 +170,10 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           <PreMeetingPane
             people={activePeople}
             initialPersonId={focusPersonId ?? actions[0]?.personId}
-            onAfter={(personId) => goToTab('after', personId)}
+            onAfter={(personId, handoff) => {
+              setAfterHandoff(handoff);
+              goToTab('after', personId);
+            }}
             onLine={(personId) => goToTab('line', personId)}
             onPersonUpdated={handlePersonUpdated}
             onAddPerson={() => navigation.navigate('AddPerson')}
@@ -180,6 +184,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           <AfterMemoPane
             people={activePeople}
             personId={focusPersonId ?? actions[0]?.personId}
+            handoff={afterHandoff}
             onPersonUpdated={handlePersonUpdated}
             onLine={(personId) => goToTab('line', personId)}
             onEnd={() => setActiveTab('end')}

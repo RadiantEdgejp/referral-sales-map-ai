@@ -16,6 +16,7 @@ import type { CoachAnswer } from '../ai/types';
 import AttachmentTextInput from '../components/AttachmentTextInput';
 import FilterChip from '../components/FilterChip';
 import SectionCard from '../components/SectionCard';
+import { saveCoachLog } from '../storage/flowLogStorage';
 import { getPeople } from '../storage/personStorage';
 import type { ScreenProps } from '../types/navigation';
 import type { Person } from '../types/person';
@@ -58,6 +59,14 @@ export default function CoachChatScreen({ route }: ScreenProps<'CoachChat'>) {
     try {
       const result = await getLlmAdapter().coachChat({ problem, person: selectedPerson });
       setAnswer(result);
+
+      // AI成功時のみ coach_logs へ永続化する（Issue #17）。
+      // 回答自体は表示済みのため、ログ保存の失敗は回答を消さずエラーだけ知らせる。
+      try {
+        await saveCoachLog({ person: selectedPerson, problem, answer: result });
+      } catch (saveError) {
+        setErrorMessage(saveError instanceof Error ? saveError.message : '相談ログの保存に失敗しました。');
+      }
     } catch (error) {
       setAnswer(null);
       setErrorMessage(toLlmErrorMessage(error));
