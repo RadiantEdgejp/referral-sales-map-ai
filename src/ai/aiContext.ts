@@ -2,8 +2,7 @@ import { supabase } from '../lib/supabaseClient';
 import { getOpenGaps } from '../storage/dataGapStorage';
 import { getInteractionTimeline, type TimelineEntry } from '../storage/interactionLedger';
 import { requireUserId, toContactRowId } from '../storage/personStorage';
-import { getUpdateHistories, type UpdateHistoryEntry } from '../storage/updateHistoryStorage';
-import { REACTION_LABELS } from '../logic/relationshipScore';
+import { REACTION_LABELS } from '../logic/reactions';
 import type { Person } from '../types/person';
 import type { ContactAIContext } from './types';
 
@@ -24,7 +23,6 @@ import type { ContactAIContext } from './types';
 const INTERACTION_LIMIT = 15;
 const AFTER_MEMO_LIMIT = 3;
 const MESSAGE_CHECK_LIMIT = 5;
-const HISTORY_LIMIT = 8;
 const TASK_LIMIT = 5;
 
 async function fetchAfterMemoSummaries(userId: string, contactId: string) {
@@ -89,13 +87,12 @@ export async function buildContactAIContext(person: Person): Promise<ContactAICo
   const userId = await requireUserId();
   const contactId = toContactRowId(userId, person.id);
 
-  const [interactions, afterMemos, temperatureHistory, openTasks, openGaps, scoreHistory] = await Promise.all([
+  const [interactions, afterMemos, temperatureHistory, openTasks, openGaps] = await Promise.all([
     getInteractionTimeline(person.id, INTERACTION_LIMIT),
     fetchAfterMemoSummaries(userId, contactId),
     fetchTemperatureHistory(userId, contactId),
     fetchOpenTasks(userId, contactId),
     getOpenGaps(person.id),
-    getUpdateHistories(person.id, HISTORY_LIMIT),
   ]);
 
   return {
@@ -106,7 +103,6 @@ export async function buildContactAIContext(person: Person): Promise<ContactAICo
     temperatureHistory,
     openTasks,
     openGaps,
-    scoreHistory,
   };
 }
 
@@ -124,11 +120,6 @@ function formatInteraction(entry: TimelineEntry): string {
 
 function formatGap(gap: { title: string; reason: string }): string {
   return `- ${gap.title}（${gap.reason}）`;
-}
-
-function formatHistory(entry: UpdateHistoryEntry): string {
-  const fields = entry.changes.map((change) => `${change.label}${change.delta > 0 ? '+' : ''}${change.delta}`).join('・');
-  return `- ${formatDate(entry.createdAt)} ${fields || 'スコア変動'}：${entry.summary.slice(0, 60)}`;
 }
 
 /**
@@ -173,10 +164,6 @@ export function formatAIContextForPrompt(context?: ContactAIContext): string {
       ? `まだ確認できていない重要事項（質問はこれを埋めることを優先する）:\n${context.openGaps.map(formatGap).join('\n')}`
       : 'まだ確認できていない重要事項: なし（基本質問でよい）',
   );
-
-  if (context.scoreHistory.length > 0) {
-    sections.push(`関係性スコアの変動履歴:\n${context.scoreHistory.map(formatHistory).join('\n')}`);
-  }
 
   return `【この人物の蓄積データ（Supabase実データ。捏造禁止。ここに無い事実を作らない）】\n${sections.join('\n\n')}`;
 }

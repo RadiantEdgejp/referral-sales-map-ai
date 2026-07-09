@@ -30,7 +30,6 @@ export const SORTS: Array<{ label: string; value: SortMode }> = [
   { label: '優先順', value: 'priority' },
   { label: '次回連絡日が近い順', value: 'nextContact' },
   { label: '新しく追加した順', value: 'newest' },
-  { label: '紹介元可能性が高い順', value: 'referrer' },
 ];
 
 export default function PeoplePane({

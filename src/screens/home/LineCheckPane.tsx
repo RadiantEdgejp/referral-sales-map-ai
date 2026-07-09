@@ -21,7 +21,7 @@ import {
 import { deriveGapSignals, GAP_DEFINITIONS } from '../../logic/dataGaps';
 import { recordReactionEvent } from '../../logic/groundedEvents';
 import { dedupePeople } from '../../logic/personPriority';
-import { REACTION_LABELS, reactionFromTemperatureLabel } from '../../logic/relationshipScore';
+import { REACTION_LABELS, reactionFromTemperatureLabel } from '../../logic/reactions';
 import { cancelContactNotification, scheduleContactNotification } from '../../notifications/notificationService';
 import { addOpenGaps, resolveGaps } from '../../storage/dataGapStorage';
 import { saveMessageCheck } from '../../storage/flowLogStorage';
@@ -142,8 +142,8 @@ export default function LineCheckPane({
         additionalMemo: [selectedPerson.additionalMemo, memo].filter(Boolean).join('\n\n'),
       });
 
-      // 送信前チェック等は「送信イベント」、受信文は「受信イベント」として台帳に記録し、
-      // AI温度感ラベルを反応（ai_signalスケール）としてスコアに反映する。
+      // 送信前チェック等は「送信イベント」、受信文は「受信イベント」として台帳に記録する。
+      // AI温度感ラベルを相手の反応として台帳に残す（数値スコアには変換しない）。
       const isOutbound = checkType === '送信前チェック' || checkType === '紹介依頼文' || checkType === 'お礼文' || checkType === '返信作成';
       const reaction = reactionFromTemperatureLabel(analysis.temperature.label);
       const event = await recordReactionEvent({
@@ -154,7 +154,6 @@ export default function LineCheckPane({
         summary: `温度感：${analysis.temperature.label}。${analysis.judgement.slice(0, 120)}`,
         sourceType: 'message_check',
         sourceId: messageCheckRowId,
-        scale: 'ai_signal',
       });
 
       // 受信文からもdata_gapsを更新する（確認できた事項をresolved、未確認をopenに）
@@ -175,7 +174,7 @@ export default function LineCheckPane({
         '人脈カードに保存しました',
         [
           'LINE・DMの内容から抽出した営業データを人脈カードに蓄積しました。',
-          `記録した反応：${REACTION_LABELS[reaction]} / スコア変動：${event.changeSummary}`,
+          `記録した反応：${REACTION_LABELS[reaction]}`,
         ].join('\n'),
       );
     } catch (error) {

@@ -9,7 +9,7 @@ import Section from '../../components/Section';
 import { createAfterMemoQuestions } from '../../logic/afterMemo';
 import { deriveGapSignals, GAP_DEFINITIONS, isGapType, normalizeAiGaps, type GapType } from '../../logic/dataGaps';
 import { recordReactionEvent } from '../../logic/groundedEvents';
-import { inferReactionFromText, REACTION_LABELS } from '../../logic/relationshipScore';
+import { inferReactionFromText, REACTION_LABELS } from '../../logic/reactions';
 import { scheduleContactNotification } from '../../notifications/notificationService';
 import { addOpenGaps, resolveGaps } from '../../storage/dataGapStorage';
 import { saveAfterMemo } from '../../storage/flowLogStorage';
@@ -141,7 +141,6 @@ export default function AfterMemoPane({
       });
 
       // 面談イベントを台帳へ記録（行動=面談、反応=回答テキストからの決定的推定）。
-      // スコア補正は ai_signal スケール（ユーザーが直接選んだ反応より小さい幅）。
       const userInputText = [Object.values(answers).join('\n'), talkMemo, allInfoMemo, nextTodo].join('\n');
       const reaction = inferReactionFromText(userInputText);
       const event = await recordReactionEvent({
@@ -152,7 +151,6 @@ export default function AfterMemoPane({
         summary: suggestion.accumulation.slice(0, 200),
         sourceType: 'after_memo',
         sourceId: afterMemoRowId,
-        scale: 'ai_signal',
       });
 
       // data_gaps 更新: テキストの決定的シグナル ＋ AI抽出をマージ（統制語彙のみ）
@@ -182,7 +180,7 @@ export default function AfterMemoPane({
         '人脈カードを更新しました',
         [
           '後メモの内容を人脈カードに蓄積しました。',
-          `記録した反応：${REACTION_LABELS[reaction]} / スコア変動：${event.changeSummary}`,
+          `記録した反応：${REACTION_LABELS[reaction]}`,
           openTypes.length > 0 ? `未確認事項：${openTypes.map((gapType) => GAP_DEFINITIONS[gapType].title).join('・')}` : '未確認事項はありません。',
         ].join('\n'),
       );

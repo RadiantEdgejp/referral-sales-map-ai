@@ -29,14 +29,6 @@ type ContactRow = {
   role: string | null;
   introduced_by: string | null;
   classification: PersonCategory[] | null;
-  scores: {
-    temperatureScore?: number;
-    customerPotential?: number;
-    referrerPotential?: number;
-    referralTargetPotential?: number;
-    informationValue?: number;
-    futurePotential?: number;
-  } | null;
   opening_talk: string | null;
   next_question: string | null;
   current_goal: string;
@@ -56,7 +48,7 @@ type ContactRow = {
 };
 
 const CONTACT_COLUMNS =
-  'id,user_id,name,industry,relationship,company,role,introduced_by,classification,scores,opening_talk,next_question,' +
+  'id,user_id,name,industry,relationship,company,role,introduced_by,classification,opening_talk,next_question,' +
   'current_goal,required_actions,next_step,line_message,email_message,caution,' +
   'recommended_next_contact_at,notes,additional_memo,next_contact_date,notification_id,' +
   'archived_at,created_at,updated_at';
@@ -98,7 +90,6 @@ function toIsoOrNull(value: string | undefined): string | null {
 }
 
 function rowToPerson(userId: string, row: ContactRow): Person {
-  const scores = row.scores ?? {};
   return {
     id: fromRowId(userId, row.id),
     name: row.name,
@@ -108,12 +99,6 @@ function rowToPerson(userId: string, row: ContactRow): Person {
     role: row.role ?? undefined,
     introducedById: row.introduced_by ? fromRowId(userId, row.introduced_by) : undefined,
     categories: row.classification ?? [],
-    temperatureScore: scores.temperatureScore ?? 0,
-    customerPotential: scores.customerPotential ?? 0,
-    referrerPotential: scores.referrerPotential ?? 0,
-    referralTargetPotential: scores.referralTargetPotential ?? 0,
-    informationValue: scores.informationValue ?? 0,
-    futurePotential: scores.futurePotential ?? 0,
     openingTalk: row.opening_talk ?? '',
     nextQuestion: row.next_question ?? '',
     goal: row.current_goal,
@@ -144,14 +129,6 @@ function personToRow(userId: string, person: Person) {
     role: person.role ?? null,
     introduced_by: person.introducedById ? toRowId(userId, person.introducedById) : null,
     classification: person.categories,
-    scores: {
-      temperatureScore: person.temperatureScore,
-      customerPotential: person.customerPotential,
-      referrerPotential: person.referrerPotential,
-      referralTargetPotential: person.referralTargetPotential,
-      informationValue: person.informationValue,
-      futurePotential: person.futurePotential,
-    },
     opening_talk: person.openingTalk,
     next_question: person.nextQuestion,
     current_goal: person.goal,

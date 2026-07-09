@@ -13,7 +13,7 @@ import {
   REACTION_LABELS,
   REACTION_NEXT_CONTACT_DAYS,
   type ReactionKind,
-} from '../../logic/relationshipScore';
+} from '../../logic/reactions';
 import type { TodayAction } from '../../logic/todayActions';
 import { recordInteraction } from '../../storage/interactionLedger';
 import type { Person } from '../../types/person';
@@ -75,7 +75,7 @@ export default function HomePane({
     const doneLine = `${formatDateTime(new Date().toISOString())} 優先行動「${item.todayTodo}」を完了（反応：${reactionLabel}${memoText ? ` / ${memoText}` : ''}）`;
 
     try {
-      // 1. 行動＋反応を台帳へ記録し、決定的規則でスコアを更新（根拠つき）
+      // 1. 行動＋反応を台帳へ記録し、メモ追記を永続化する
       const event = await recordReactionEvent({
         person: {
           ...person,
@@ -86,7 +86,6 @@ export default function HomePane({
         title: `優先行動「${item.todayTodo}」を完了`,
         summary: memoText || `反応：${reactionLabel}`,
         sourceType: 'action_task',
-        scale: 'direct',
       });
 
       // 2. リアクション種別に応じた次回連絡日ルール（好反応→短め、反応なし→長め）
@@ -107,11 +106,7 @@ export default function HomePane({
       setReactionTarget(null);
       Alert.alert(
         `反応「${reactionLabel}」を記録しました`,
-        [
-          `スコア変動：${event.changeSummary}`,
-          notice,
-          '会話の内容は後メモから入力すると人脈カードに反映されます。',
-        ].join('\n'),
+        [notice, '会話の内容は後メモから入力すると人脈カードに反映されます。'].join('\n'),
       );
     } catch (error) {
       // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）

@@ -81,11 +81,6 @@ export type QualificationAnalysis = {
   temperature: SalesTemperature;
   relationshipStage: RelationshipStage;
   routeTypes: SalesRouteType[];
-  customerPotential: number;
-  referrerPotential: number;
-  referralTargetPotential: number;
-  informationValue: number;
-  futurePotential: number;
   referralRequestReadiness: {
     canAskNow: boolean;
     reason: string;
@@ -101,14 +96,6 @@ export type PersonCardUpdateProposal = {
   nextQuestion: string;
   nextContactAt: string;
   cautions: string;
-  scores: {
-    temperatureScore: number;
-    customerPotential: number;
-    referrerPotential: number;
-    referralTargetPotential: number;
-    informationValue: number;
-    futurePotential: number;
-  };
   memoToAppend: string;
 };
 

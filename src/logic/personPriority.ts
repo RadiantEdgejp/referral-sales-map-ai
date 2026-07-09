@@ -1,6 +1,6 @@
 import type { Person } from '../types/person';
 
-export type SortMode = 'priority' | 'nextContact' | 'newest' | 'referrer';
+export type SortMode = 'priority' | 'nextContact' | 'newest';
 
 export type DueState = 'overdue' | 'today' | 'upcoming' | 'unset';
 
@@ -41,10 +41,6 @@ export function sortPeople(a: Person, b: Person, sortMode: SortMode) {
   if (sortMode === 'newest') {
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   }
-  if (sortMode === 'referrer') {
-    return b.referrerPotential - a.referrerPotential;
-  }
-
   return priorityScore(b) - priorityScore(a);
 }
 
@@ -53,11 +49,13 @@ export function dateValue(value?: string) {
 }
 
 export function priorityScore(person: Person) {
+  // 優先度は「次回連絡日の近さ」を主軸に、次アクションの有無と新しさで補正する。
+  // 恣意的な関係性スコアには依存しない（数値スコアは廃止）。
   const next = person.nextContactAt ? new Date(person.nextContactAt).getTime() : Number.MAX_SAFE_INTEGER;
   const dueBonus = next <= Date.now() + 24 * 60 * 60 * 1000 ? 100 : 0;
   const actionBonus = person.nextAction ? 20 : 0;
   const recentBonus = Math.max(0, 20 - Math.floor((Date.now() - new Date(person.createdAt).getTime()) / 86400000));
-  return dueBonus + person.referrerPotential + actionBonus + recentBonus;
+  return dueBonus + actionBonus + recentBonus;
 }
 
 export function getDueState(person: Person): DueState {

@@ -1,26 +1,18 @@
 import { recordInteraction, type LedgerAction } from '../storage/interactionLedger';
 import { updatePerson } from '../storage/personStorage';
-import { saveUpdateHistory } from '../storage/updateHistoryStorage';
 import type { Person } from '../types/person';
-import {
-  applyReactionDeltas,
-  formatScoreChanges,
-  REACTION_LABELS,
-  type DeltaScale,
-  type ReactionKind,
-  type ScoreChange,
-} from './relationshipScore';
+import type { ReactionKind } from './reactions';
 
 /**
- * 「行動→反応→スコア変動→履歴」を1本のイベントとして確定させるオーケストレーション。
+ * 「行動→反応」を1本のイベントとして確定させるオーケストレーション。
  *
  * 順序（意図的）:
  * 1. interaction_logs に行動＋反応イベントを記録（これが根拠の起点）
- * 2. 決定的デルタ規則でスコアを更新（contacts.scores）
- * 3. update_histories に 旧値/新値/デルタ/理由/根拠イベントID を記録
+ * 2. 人物側の変更（メモ追記など）を永続化する
  *
+ * 反応は数値スコアに変換しない。関係の進み具合は、行動と反応の
+ * タイムライン・分類・未確認事項で表現する（恣意的な点数化は廃止）。
  * 途中で失敗した場合はエラーを投げる（部分確定は呼び出し側に通知される）。
- * スコアは必ずこの経路（＝記録されたイベント）経由でのみ変動させること。
  */
 
 export type ReactionEventInput = {
@@ -35,21 +27,14 @@ export type ReactionEventInput = {
   sourceType: string;
   /** 根拠行のID（after_memos.id 等） */
   sourceId?: string;
-  /** direct=ユーザーが反応を直接選択 / ai_signal=AI抽出温度感による補正 */
-  scale: DeltaScale;
 };
 
 export type ReactionEventResult = {
   saved: Person;
   ledgerRowId: string;
-  changes: ScoreChange[];
-  /** Alert等に出す変動要約（例: 温度感 55→63（+8）） */
-  changeSummary: string;
 };
 
 export async function recordReactionEvent(input: ReactionEventInput): Promise<ReactionEventResult> {
-  const reactionLabel = REACTION_LABELS[input.reaction];
-
   // 1. 台帳イベント（行動＋反応）
   const ledgerRowId = await recordInteraction({
     person: input.person,
@@ -61,26 +46,8 @@ export async function recordReactionEvent(input: ReactionEventInput): Promise<Re
     sourceId: input.sourceId,
   });
 
-  // 2. 決定的デルタ規則によるスコア更新
-  const { next, changes } = applyReactionDeltas(input.person, input.reaction, input.scale);
-  let saved = input.person;
-  if (changes.length > 0) {
-    saved = await updatePerson(next);
+  // 2. 人物側の変更（メモ追記など）を永続化する
+  const saved = await updatePerson(input.person);
 
-    // 3. 根拠つき変更履歴
-    await saveUpdateHistory({
-      person: saved,
-      sourceType: 'interaction_log',
-      sourceId: ledgerRowId,
-      summary: `反応「${reactionLabel}」（${input.title}）に基づく規則適用: ${formatScoreChanges(changes)}`,
-      changes,
-    });
-  }
-
-  return {
-    saved,
-    ledgerRowId,
-    changes,
-    changeSummary: formatScoreChanges(changes),
-  };
+  return { saved, ledgerRowId };
 }

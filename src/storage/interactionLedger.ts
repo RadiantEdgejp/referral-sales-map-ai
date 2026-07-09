@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
-import type { ReactionKind } from '../logic/relationshipScore';
+import type { ReactionKind } from '../logic/reactions';
 import type { Person } from '../types/person';
 import { requireUserId, toContactRowId } from './personStorage';
 

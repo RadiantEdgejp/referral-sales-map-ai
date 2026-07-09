@@ -56,14 +56,6 @@ export type ContactAIContext = {
   openTasks: Array<{ title: string; dueDate: string }>;
   /** 未解決 data_gaps（質問生成の根拠） */
   openGaps: Array<{ gapType: string; title: string; reason: string; createdAt: string }>;
-  /** update_histories（スコア変動の根拠履歴） */
-  scoreHistory: Array<{
-    rowId: string;
-    summary: string;
-    sourceType: string;
-    createdAt: string;
-    changes: Array<{ field: string; label: string; old: number; new: number; delta: number }>;
-  }>;
 };
 
 export type PersonAnalysisInput = {
