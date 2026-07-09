@@ -131,20 +131,28 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
       return;
     }
 
+    // 端末へのプッシュ通知はあくまで付随機能。スケジューリングに失敗しても
+    // （Web版は非対応、権限未許可など）、次回連絡日そのものは必ず保存する。
+    let notificationId = person.notificationId;
+    let notice = formatDateTime(selectedDate.toISOString());
     try {
-      const notificationId = await scheduleContactNotification(person, selectedDate);
-      const updated = {
-        ...person,
-        nextContactAt: selectedDate.toISOString(),
-        notificationId,
-        additionalMemo,
-      };
-      await updatePerson(updated);
-      setPerson(updated);
-      Alert.alert('通知を設定しました', formatDateTime(selectedDate.toISOString()));
+      notificationId = await scheduleContactNotification(person, selectedDate);
     } catch (error) {
-      Alert.alert('通知を設定できませんでした', error instanceof Error ? error.message : '通知設定を確認してください。');
+      notificationId = undefined;
+      notice = `${formatDateTime(selectedDate.toISOString())}（${
+        error instanceof Error ? error.message : '通知は設定できませんでした。'
+      }）`;
     }
+
+    const updated = {
+      ...person,
+      nextContactAt: selectedDate.toISOString(),
+      notificationId,
+      additionalMemo,
+    };
+    await updatePerson(updated);
+    setPerson(updated);
+    Alert.alert('次回連絡日を設定しました', notice);
   };
 
   if (!person) {

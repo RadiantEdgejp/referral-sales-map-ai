@@ -14,6 +14,16 @@ export function configureNotifications() {
 }
 
 export async function requestNotificationPermission() {
+  // expo-notifications の権限API（getPermissionsAsync/requestPermissionsAsync）は
+  // Web版では解決しないPromiseを返すことがあり、呼び出し元の await を無期限に
+  // ハングさせてしまう（catchでは救えない）。Web版はそもそもローカル通知未対応
+  // （CLAUDE.md 8章のモバイルQR経路が本来の通知配信経路）なので、ここで即座に
+  // 未許可として扱い、呼び出し元の「通知は設定できなかったが日付は保存する」
+  // というフォールバック処理へ落とす。
+  if (Platform.OS === 'web') {
+    return false;
+  }
+
   const current = await Notifications.getPermissionsAsync();
   if (current.granted) {
     return true;
@@ -38,7 +48,11 @@ export async function cancelContactNotification(notificationId?: string) {
 export async function scheduleContactNotification(person: Person, date: Date) {
   const granted = await requestNotificationPermission();
   if (!granted) {
-    throw new Error('通知が許可されていません。スマホの設定から通知を許可してください。');
+    throw new Error(
+      Platform.OS === 'web'
+        ? 'Web版は端末へのプッシュ通知に対応していません。次回連絡日はカードに保存されます。'
+        : '通知が許可されていません。スマホの設定から通知を許可してください。',
+    );
   }
 
   if (person.notificationId) {
