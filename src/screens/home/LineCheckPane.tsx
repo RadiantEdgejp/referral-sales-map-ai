@@ -4,6 +4,8 @@ import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
 import { buildContactAIContext } from '../../ai/aiContext';
 import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
+import { generateForReview, persistReviewedResult } from '../../ai/reviewWorkflow';
+import { assertMessageCheckSafe } from '../../ai/safety';
 import type { LineCheckAnalysis } from '../../ai/types';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
 import ContactPickerModal from '../../components/ContactPickerModal';
@@ -51,6 +53,7 @@ export default function LineCheckPane({
   const [messageText, setMessageText] = useState('');
   const [analysis, setAnalysis] = useState<LineCheckAnalysis | null>(null);
   const [checking, setChecking] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [copyNotice, setCopyNotice] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
@@ -87,12 +90,16 @@ export default function LineCheckPane({
     try {
       // 生成直前にSupabaseから蓄積データを集約して注入する（CLAUDE.md 6章）
       const context = await buildContactAIContext(selectedPerson);
-      const result = await getLlmAdapter().analyzeMessageCheck({
+      const input = {
         person: selectedPerson,
         checkType,
         text: messageText,
         context,
-      });
+      };
+      const result = await generateForReview(
+        () => getLlmAdapter().analyzeMessageCheck(input),
+        (generated) => assertMessageCheckSafe(input, generated),
+      );
       setAnalysis(result);
     } catch (error) {
       // AI失敗時は分析結果を持たない＝人脈カードへの保存操作ができない状態を維持する
@@ -110,6 +117,7 @@ export default function LineCheckPane({
   };
 
   const saveToPersonCard = async () => {
+    if (saving || savedNotice) return;
     if (!selectedPerson || !analysis) return;
 
     const memo = [
@@ -125,6 +133,9 @@ export default function LineCheckPane({
     ].join('\n');
 
     try {
+      setSaving(true);
+      const input = { person: selectedPerson, checkType, text: messageText };
+      await persistReviewedResult(analysis, (reviewed) => assertMessageCheckSafe(input, reviewed), async () => {
       // 分析結果を message_checks に永続化してから、人脈カードへ反映する（Issue #17）
       const messageCheckRowId = await saveMessageCheck({
         person: selectedPerson,
@@ -177,9 +188,12 @@ export default function LineCheckPane({
           `記録した反応：${REACTION_LABELS[reaction]}`,
         ].join('\n'),
       );
+      });
     } catch (error) {
       // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
       Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '文面確認の保存中にエラーが発生しました。');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -377,12 +391,16 @@ export default function LineCheckPane({
             <LineResultCard title="抽出された情報" body={analysis.extracted.map((item) => `・${item.label}：${item.value}`).join('\n')} />
             <LineResultCard title="注意点" body={analysis.caution} />
             <LineResultCard title="営業フィードバック" body={`良い点：${analysis.feedbackGood}\n改善点：${analysis.feedbackImprove}`} />
+            <LineResultCard title="確認済み事実" body={analysis.grounding?.confirmedFacts.map((item) => `・${item}`).join('\n') || 'なし'} />
+            <LineResultCard title="仮説（未確定）" body={analysis.grounding?.hypotheses.map((item) => `・${item}`).join('\n') || 'なし'} />
+            <LineResultCard title="未確認事項" body={analysis.grounding?.unknowns.map((item) => `・${item}`).join('\n') || 'なし'} />
           </Section>
 
           <Section title="保存・連携" subtitle="分析した内容を人脈カード、後メモ、通知、営業コーチに流します。">
             <View style={styles.primaryActionStack}>
-              <Pressable style={styles.primaryCtaWide} onPress={saveToPersonCard}>
-                <Text style={styles.primaryCtaText}>人脈カードに保存</Text>
+              <Pressable style={[styles.primaryCtaWide, (saving || savedNotice) && styles.buttonDisabled]} onPress={saveToPersonCard} disabled={saving || savedNotice}>
+                {saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
+                <Text style={styles.primaryCtaText}>{saving ? '保存中...' : savedNotice ? '人脈カード保存済み' : '人脈カードに保存'}</Text>
               </Pressable>
               <View style={styles.inlineActions}>
                 <Pressable style={styles.secondaryCta} onPress={sendToAfterMemo}>

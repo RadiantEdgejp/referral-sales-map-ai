@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import { buildContactAIContext } from '../../ai/aiContext';
 import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
+import { generateForReview, persistReviewedResult } from '../../ai/reviewWorkflow';
+import { assertAfterMemoSafe } from '../../ai/safety';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
 import Info from '../../components/Info';
 import MemoField from '../../components/MemoField';
@@ -59,12 +61,15 @@ export default function AfterMemoPane({
   const [nextTodo, setNextTodo] = useState('');
   const [suggestion, setSuggestion] = useState<AfterMemoAiSuggestion | null>(null);
   const [organizing, setOrganizing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [showAiDetails, setShowAiDetails] = useState(false);
   const [updatedNotice, setUpdatedNotice] = useState(false);
 
   const setAnswer = (question: string, value: string) => {
     setAnswers((current) => ({ ...current, [question]: value }));
+    setSuggestion(null);
+    setUpdatedNotice(false);
   };
 
   const organizeWithAi = async () => {
@@ -78,14 +83,18 @@ export default function AfterMemoPane({
     try {
       // 生成直前にSupabaseから蓄積データを集約して注入する（CLAUDE.md 6章）
       const context = person ? await buildContactAIContext(person) : undefined;
-      const result = await getLlmAdapter().analyzeAfterMemo({
+      const input = {
         person,
         answers,
         talkMemo,
         allInfoMemo,
         nextTodo,
         context,
-      });
+      };
+      const result = await generateForReview(
+        () => getLlmAdapter().analyzeAfterMemo(input),
+        (generated) => assertAfterMemoSafe(input, generated),
+      );
       setSuggestion(result);
     } catch (error) {
       // AI失敗時は更新案を持たない＝人脈カード更新（DB書き込み）ができない状態を維持する
@@ -97,6 +106,7 @@ export default function AfterMemoPane({
   };
 
   const updatePersonCard = async () => {
+    if (saving || updatedNotice) return;
     if (!person) {
       Alert.alert('人脈カードがありません', '更新対象の人物を選んでください。');
       return;
@@ -119,6 +129,9 @@ export default function AfterMemoPane({
     ];
 
     try {
+      setSaving(true);
+      const input = { person, answers, talkMemo, allInfoMemo, nextTodo };
+      await persistReviewedResult(suggestion, (reviewed) => assertAfterMemoSafe(input, reviewed), async () => {
       // 後メモ本体を after_memos に永続化してから、人脈カードへ反映する（Issue #17）
       const afterMemoRowId = await saveAfterMemo({
         person,
@@ -184,9 +197,12 @@ export default function AfterMemoPane({
           openTypes.length > 0 ? `未確認事項：${openTypes.map((gapType) => GAP_DEFINITIONS[gapType].title).join('・')}` : '未確認事項はありません。',
         ].join('\n'),
       );
+      });
     } catch (error) {
       // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
       Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '後メモの保存中にエラーが発生しました。');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -259,15 +275,15 @@ export default function AfterMemoPane({
       </Section>
 
       <Section title="会話で得た情報を全部入れる" subtitle="分類・温度感・次回タイミングはAIが推論します。ここでは素材を漏らさず残します。">
-        <MemoField label="話した内容" value={talkMemo} onChangeText={setTalkMemo} placeholder="会話全体の流れ、相手が強く話していたこと、印象に残った言葉" large />
+        <MemoField label="話した内容" value={talkMemo} onChangeText={(value) => { setTalkMemo(value); setSuggestion(null); setUpdatedNotice(false); }} placeholder="会話全体の流れ、相手が強く話していたこと、印象に残った言葉" large />
         <MemoField
           label="得た情報を全部貼る"
           value={allInfoMemo}
-          onChangeText={setAllInfoMemo}
+          onChangeText={(value) => { setAllInfoMemo(value); setSuggestion(null); setUpdatedNotice(false); }}
           placeholder="課題、背景、周りの人脈、紹介できそうな人、予算感、期限、決裁者、断り理由、温度感、LINEで来た文などを雑に全部"
           large
         />
-        <MemoField label="自分が思う次にやること" value={nextTodo} onChangeText={setNextTodo} placeholder="例：3日以内に採用系の情報を送る / 紹介依頼はまだしない / 次回は固定費の話を聞く" />
+        <MemoField label="自分が思う次にやること" value={nextTodo} onChangeText={(value) => { setNextTodo(value); setSuggestion(null); setUpdatedNotice(false); }} placeholder="例：3日以内に採用系の情報を送る / 紹介依頼はまだしない / 次回は固定費の話を聞く" />
 
         <View style={styles.aiExtractHintCard}>
           <Text style={styles.aiExtractTitle}>AIが抽出する営業データ</Text>
@@ -312,12 +328,16 @@ export default function AfterMemoPane({
               <Info label="次回聞くべき質問" value={suggestion.nextQuestion} />
               <Info label="LINE文案" value={suggestion.lineMessage} />
               <Info label="蓄積する情報" value={suggestion.accumulation} />
+              <Info label="確認済み事実" value={suggestion.grounding?.confirmedFacts.map((item) => `・${item}`).join('\n') || 'なし'} />
+              <Info label="仮説（未確定）" value={suggestion.grounding?.hypotheses.map((item) => `・${item}`).join('\n') || 'なし'} />
+              <Info label="未確認事項" value={suggestion.grounding?.unknowns.map((item) => `・${item}`).join('\n') || 'なし'} />
             </>
           ) : null}
 
           <View style={styles.primaryActionStack}>
-            <Pressable style={styles.primaryCtaWide} onPress={updatePersonCard}>
-              <Text style={styles.primaryCtaText}>人脈カードを更新</Text>
+            <Pressable style={[styles.primaryCtaWide, (saving || updatedNotice) && styles.buttonDisabled]} onPress={updatePersonCard} disabled={saving || updatedNotice}>
+              {saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
+              <Text style={styles.primaryCtaText}>{saving ? '保存中...' : updatedNotice ? '人脈カード更新済み' : '人脈カードを更新'}</Text>
             </Pressable>
             <View style={styles.inlineActions}>
               <Pressable style={styles.secondaryCta} onPress={scheduleNextContact}>

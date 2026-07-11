@@ -1,5 +1,6 @@
 import type { AfterMemoAiSuggestion } from '../types/aiAnalysis';
 import type { Person, PersonAnalysis } from '../types/person';
+import type { AiGrounding } from './groundingTypes';
 
 export type LlmProviderName = 'ollama' | 'mock';
 
@@ -85,6 +86,7 @@ export type PreMeetingNavigation = {
   recordItems: string[];
   evidence: string[];
   coachPrompt: string;
+  grounding?: AiGrounding;
 };
 
 export type AfterMemoSuggestionInput = {
@@ -120,6 +122,7 @@ export type LineCheckAnalysis = {
   feedbackGood: string;
   feedbackImprove: string;
   coachPrompt: string;
+  grounding?: AiGrounding;
 };
 
 export type CoachChatInput = {

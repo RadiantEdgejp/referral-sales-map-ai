@@ -1,4 +1,5 @@
 import type { PersonCategory } from './person';
+import type { AiGrounding } from '../ai/groundingTypes';
 
 export type AiConfidence = 'low' | 'medium' | 'high';
 
@@ -151,4 +152,5 @@ export type AfterMemoAiSuggestion = {
   unresolvedGaps?: Array<{ gapType: string; reason?: string }>;
   /** AIが「今回の会話で確認できた」と判断した gapType（統制語彙） */
   resolvedGapTypes?: string[];
+  grounding?: AiGrounding;
 };

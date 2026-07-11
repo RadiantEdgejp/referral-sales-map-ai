@@ -16,15 +16,44 @@ export const mockProvider: LlmAdapter = {
   },
 
   async createPreMeetingNav(input) {
-    return createPreMeetingNavigation(input.person, input.actionType, input.context);
+    const result = createPreMeetingNavigation(input.person, input.actionType, input.context);
+    return {
+      ...result,
+      grounding: {
+        confirmedFacts: [input.person?.rawMemo, input.memo].filter((item): item is string => Boolean(item?.trim())),
+        hypotheses: input.person?.categories.map((category) => `${category}としての可能性`) ?? [],
+        unknowns: input.context?.openGaps.map((gap) => gap.title) ?? [],
+        cautions: [input.person?.cautions].filter((item): item is string => Boolean(item?.trim())),
+      },
+    };
   },
 
   async analyzeAfterMemo(input) {
-    return createAfterMemoSuggestion(input);
+    const result = createAfterMemoSuggestion(input);
+    const confirmedFacts = [...Object.values(input.answers), input.talkMemo, input.allInfoMemo].filter((item) => item.trim());
+    return {
+      ...result,
+      accumulation: [result.accumulation, ...confirmedFacts.map((fact) => `確認済み：${fact}`)].join('\n'),
+      grounding: {
+        confirmedFacts,
+        hypotheses: [],
+        unknowns: result.unresolvedGaps?.map((gap) => gap.reason ?? gap.gapType) ?? [],
+        cautions: [input.person?.cautions].filter((item): item is string => Boolean(item?.trim())),
+      },
+    };
   },
 
   async analyzeMessageCheck(input) {
-    return createLineCheckAnalysis(input.person, input.checkType as LineCheckType, input.text);
+    const result = createLineCheckAnalysis(input.person, input.checkType as LineCheckType, input.text);
+    return {
+      ...result,
+      grounding: {
+        confirmedFacts: [input.text],
+        hypotheses: [],
+        unknowns: result.extracted.filter((item) => item.value === '未確認').map((item) => item.label),
+        cautions: [result.caution],
+      },
+    };
   },
 
   async coachChat(input) {
