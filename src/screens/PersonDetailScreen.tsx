@@ -7,13 +7,20 @@ import SectionCard from '../components/SectionCard';
 import { REACTION_LABELS } from '../logic/reactions';
 import { cancelContactNotification, scheduleContactNotification } from '../notifications/notificationService';
 import { getInteractionTimeline, type TimelineEntry } from '../storage/interactionLedger';
-import { getPeople, updatePerson } from '../storage/personStorage';
+import {
+  getPersonHistorySummary,
+  type PersonHistorySummary,
+} from '../storage/personHistorySummary';
+import { getPeople, getPersonById, updatePerson } from '../storage/personStorage';
 import type { ScreenProps } from '../types/navigation';
 import type { Person } from '../types/person';
 import { formatDateTime } from '../utils/date';
 
 export default function PersonDetailScreen({ navigation, route }: ScreenProps<'PersonDetail'>) {
   const [person, setPerson] = useState<Person | null>(null);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'not-found' | 'error'>('loading');
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
   const [additionalMemo, setAdditionalMemo] = useState('');
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [companyDraft, setCompanyDraft] = useState('');
@@ -21,6 +28,8 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
   const [allPeople, setAllPeople] = useState<Person[]>([]);
   const [introducerPickerOpen, setIntroducerPickerOpen] = useState(false);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [historySummary, setHistorySummary] = useState<PersonHistorySummary | null>(null);
+  const [historyError, setHistoryError] = useState('');
 
   const archivePerson = async () => {
     if (!person) {
@@ -39,20 +48,68 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
   };
 
   useEffect(() => {
-    getPeople().then((people) => {
-      const found = people.find((item) => item.id === route.params.personId) ?? null;
-      setAllPeople(people);
-      setPerson(found);
-      setAdditionalMemo(found?.additionalMemo ?? '');
-      setCompanyDraft(found?.company ?? '');
-      setRoleDraft(found?.role ?? '');
-    });
+    let active = true;
+    setLoadState('loading');
+    setLoadError('');
+    setPerson(null);
+    setHistorySummary(null);
+    setHistoryError('');
 
-    // 行動→反応タイムライン（蓄積が目に見える資産になる）
+    Promise.all([getPersonById(route.params.personId), getPeople()])
+      .then(([found, people]) => {
+        if (!active) {
+          return;
+        }
+
+        setAllPeople(people.filter((item) => !item.archivedAt));
+        if (!found || found.archivedAt) {
+          setLoadState('not-found');
+          return;
+        }
+
+        setPerson(found);
+        setAdditionalMemo(found.additionalMemo ?? '');
+        setCompanyDraft(found.company ?? '');
+        setRoleDraft(found.role ?? '');
+        setLoadState('ready');
+      })
+      .catch((error: unknown) => {
+        if (!active) {
+          return;
+        }
+        setLoadError(error instanceof Error ? error.message : '人物データの取得中にエラーが発生しました。');
+        setLoadState('error');
+      });
+
+    // 行動→反応タイムラインは補助情報なので、取得失敗で人物詳細全体を止めない。
     getInteractionTimeline(route.params.personId)
-      .then(setTimeline)
-      .catch(() => setTimeline([]));
-  }, [route.params.personId]);
+      .then((entries) => {
+        if (active) {
+          setTimeline(entries);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setTimeline([]);
+        }
+      });
+
+    getPersonHistorySummary(route.params.personId)
+      .then((summary) => {
+        if (active) {
+          setHistorySummary(summary);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setHistoryError(error instanceof Error ? error.message : '営業履歴の集計に失敗しました。');
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [reloadKey, route.params.personId]);
 
   // 紹介チェーン（contacts.introduced_by）：紹介元と、この人から紹介された人
   const introducer = person?.introducedById
@@ -155,10 +212,37 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
     Alert.alert('次回連絡日を設定しました', notice);
   };
 
-  if (!person) {
+  if (loadState === 'loading') {
     return (
       <View style={styles.center}>
         <Text style={styles.muted}>人物データを読み込んでいます。</Text>
+      </View>
+    );
+  }
+
+  if (loadState === 'error') {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.stateTitle}>人物データを読み込めませんでした</Text>
+        <Text style={styles.muted}>{loadError}</Text>
+        <Pressable style={styles.primaryButton} onPress={() => setReloadKey((current) => current + 1)}>
+          <Text style={styles.primaryButtonText}>再試行</Text>
+        </Pressable>
+        <Pressable style={styles.stateBackButton} onPress={() => navigation.goBack()}>
+          <Text style={styles.stateBackButtonText}>前の画面に戻る</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (loadState === 'not-found' || !person) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.stateTitle}>人物が見つかりません</Text>
+        <Text style={styles.muted}>削除またはアーカイブされた可能性があります。</Text>
+        <Pressable style={styles.stateBackButton} onPress={() => navigation.goBack()}>
+          <Text style={styles.stateBackButtonText}>人脈一覧に戻る</Text>
+        </Pressable>
       </View>
     );
   }
@@ -179,6 +263,35 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
           ))}
         </View>
       </View>
+
+      <SectionCard title="この人の現在地">
+        <Text style={styles.currentStepLabel}>次の一手</Text>
+        <Text style={styles.currentStepValue}>
+          {historySummary?.latestNextStep || person.nextAction || '次の一手がまだ設定されていません。'}
+        </Text>
+        {historySummary ? (
+          <View style={styles.historySummaryGrid}>
+            <HistoryMetric label="後メモ" value={historySummary.afterMemoCount} />
+            <HistoryMetric label="文面確認" value={historySummary.messageCheckCount} />
+            <HistoryMetric label="更新履歴" value={historySummary.updateHistoryCount} />
+            <HistoryMetric label="操作履歴" value={historySummary.interactionCount} />
+            <HistoryMetric label="営業ルート" value={historySummary.salesRouteCount} />
+            <HistoryMetric label="未確認" value={historySummary.unresolvedGapCount} warning />
+          </View>
+        ) : historyError ? (
+          <View style={styles.historyErrorBox}>
+            <Text style={styles.historyErrorText}>{historyError}</Text>
+            <Pressable style={styles.historyRetryButton} onPress={() => setReloadKey((current) => current + 1)}>
+              <Text style={styles.historyRetryText}>履歴を再読込</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Text style={styles.muted}>営業履歴を集計しています。</Text>
+        )}
+        {historySummary?.latestActivityAt ? (
+          <Text style={styles.latestActivity}>最終営業データ：{formatDateTime(historySummary.latestActivityAt)}</Text>
+        ) : null}
+      </SectionCard>
 
       <SectionCard title="会社・役職">
         <Text style={styles.fieldLabel}>会社名</Text>
@@ -419,6 +532,15 @@ function ReminderButton({
   );
 }
 
+function HistoryMetric({ label, value, warning }: { label: string; value: number; warning?: boolean }) {
+  return (
+    <View style={[styles.historyMetric, warning && value > 0 && styles.historyMetricWarning]}>
+      <Text style={styles.historyMetricValue}>{value}</Text>
+      <Text style={styles.historyMetricLabel}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
@@ -433,9 +555,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F8FAFC',
+    padding: 24,
+  },
+  stateTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 8,
+    textAlign: 'center',
   },
   muted: {
     color: '#64748B',
+    textAlign: 'center',
+  },
+  stateBackButton: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    paddingHorizontal: 18,
+  },
+  stateBackButtonText: {
+    color: '#153E75',
+    fontWeight: '800',
   },
   hero: {
     backgroundColor: '#153E75',
@@ -453,6 +595,72 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     marginTop: 6,
+  },
+  currentStepLabel: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  currentStepValue: {
+    color: '#0F172A',
+    fontSize: 17,
+    fontWeight: '900',
+    lineHeight: 24,
+    marginTop: 4,
+  },
+  historySummaryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 14,
+  },
+  historyMetric: {
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    minWidth: 92,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  historyMetricWarning: {
+    backgroundColor: '#FEF3C7',
+  },
+  historyMetricValue: {
+    color: '#0F172A',
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  historyMetricLabel: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  latestActivity: {
+    color: '#64748B',
+    fontSize: 12,
+    marginTop: 10,
+  },
+  historyErrorBox: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 8,
+    marginTop: 12,
+    padding: 10,
+  },
+  historyErrorText: {
+    color: '#991B1B',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  historyRetryButton: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingVertical: 4,
+  },
+  historyRetryText: {
+    color: '#153E75',
+    fontSize: 12,
+    fontWeight: '900',
   },
   industry: {
     color: '#DBEAFE',

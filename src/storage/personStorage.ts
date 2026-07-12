@@ -76,7 +76,7 @@ export function toContactRowId(userId: string, personId: string): string {
 
 const toRowId = toContactRowId;
 
-function fromRowId(userId: string, rowId: string): string {
+export function fromContactRowId(userId: string, rowId: string): string {
   const prefix = `${userId}:`;
   return rowId.startsWith(prefix) ? rowId.slice(prefix.length) : rowId;
 }
@@ -91,13 +91,13 @@ function toIsoOrNull(value: string | undefined): string | null {
 
 function rowToPerson(userId: string, row: ContactRow): Person {
   return {
-    id: fromRowId(userId, row.id),
+    id: fromContactRowId(userId, row.id),
     name: row.name,
     industry: row.industry,
     relationship: row.relationship,
     company: row.company ?? undefined,
     role: row.role ?? undefined,
-    introducedById: row.introduced_by ? fromRowId(userId, row.introduced_by) : undefined,
+    introducedById: row.introduced_by ? fromContactRowId(userId, row.introduced_by) : undefined,
     categories: row.classification ?? [],
     openingTalk: row.opening_talk ?? '',
     nextQuestion: row.next_question ?? '',
@@ -160,6 +160,21 @@ export async function getPeople(): Promise<Person[]> {
   }
 
   return ((data ?? []) as unknown as ContactRow[]).map((row) => rowToPerson(userId, row));
+}
+
+export async function getPersonById(personId: string): Promise<Person | null> {
+  const userId = await requireUserId();
+  const { data, error } = await supabase
+    .from('contacts')
+    .select(CONTACT_COLUMNS)
+    .eq('id', toRowId(userId, personId))
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`人物データの取得に失敗しました: ${error.message}`);
+  }
+
+  return data ? rowToPerson(userId, data as unknown as ContactRow) : null;
 }
 
 export async function savePeople(people: Person[]) {
