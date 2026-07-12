@@ -16,6 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      # Sales-day boundaries and 09:00 follow-ups are defined in the product's
+      # initial Japan locale. Keep CI deterministic instead of inheriting UTC.
+      TZ: Asia/Tokyo
       EXPO_PUBLIC_SUPABASE_URL: https://example.supabase.co
       EXPO_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-anon-key
 
