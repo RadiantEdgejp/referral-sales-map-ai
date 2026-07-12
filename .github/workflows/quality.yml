@@ -45,6 +45,18 @@ jobs:
         if: always()
         run: npm test
 
+      - name: Reject high or critical dependency vulnerabilities
+        if: always()
+        run: npm run audit:security
+
       - name: Export web production bundle
         if: always()
         run: npm run export:web
+
+      - name: Export Android production bundle
+        if: always()
+        run: npm run export:android
+
+      - name: Export iOS production bundle
+        if: always()
+        run: npm run export:ios

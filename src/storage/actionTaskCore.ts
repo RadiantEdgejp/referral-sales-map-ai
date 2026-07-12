@@ -15,6 +15,12 @@ export type PersistedActionTask = {
   createdFrom: string;
 };
 
+const WORKFLOW_COMPLETION_TYPES = new Set(['pre_meeting', 'after_memo']);
+
+export function requiresWorkflowSave(task: Pick<PersistedActionTask, 'actionType'>): boolean {
+  return WORKFLOW_COMPLETION_TYPES.has(task.actionType);
+}
+
 export type ActionTaskClient = { from: (table: string) => any };
 
 type ActionTaskRow = {
@@ -35,18 +41,31 @@ function mapTask(userId: string, row: ActionTaskRow): PersistedActionTask | null
     nextStep: row.next_step, targetScreen: row.target_screen, dueDate: row.due_date, status: row.status, createdFrom: row.created_from };
 }
 
-export async function getOpenActionTasksWithClient(client: ActionTaskClient, userId: string): Promise<PersistedActionTask[]> {
+export async function getOpenActionTasksWithClient(
+  client: ActionTaskClient,
+  userId: string,
+  now = new Date(),
+): Promise<PersistedActionTask[]> {
+  const endOfToday = new Date(now);
+  endOfToday.setHours(23, 59, 59, 999);
   const { data, error } = await client.from('action_tasks')
     .select('id,contact_id,sales_route_id,calendar_event_id,title,action_type,priority,reason,today_goal,next_step,target_screen,due_date,status,created_from')
-    .eq('user_id', userId).in('status', ['open', 'pending']).order('due_date', { ascending: true });
+    .eq('user_id', userId)
+    .in('status', ['open', 'pending'])
+    .lte('due_date', endOfToday.toISOString())
+    .order('due_date', { ascending: true });
   if (error) throw new Error(`今日やることの取得に失敗しました: ${error.message}`);
   return ((data ?? []) as ActionTaskRow[]).map((row) => mapTask(userId, row)).filter((task): task is PersistedActionTask => task !== null);
 }
 
 export async function completeActionTaskWithClient(client: ActionTaskClient, userId: string, taskId: string): Promise<void> {
   const { data, error } = await client.from('action_tasks').update({ status: 'completed' }).eq('id', taskId).eq('user_id', userId)
-    .in('status', ['open', 'pending']).select('id').single();
-  if (error || !data) throw new Error(`今日やることの完了に失敗しました: ${error?.message ?? '対象がありません'}`);
+    .in('status', ['open', 'pending'])
+    .not('action_type', 'in', '("pre_meeting","after_memo")')
+    .select('id').single();
+  if (error || !data) {
+    throw new Error(`今日やることの完了に失敗しました: ${error?.message ?? '予定前ナビ・後メモは画面内で保存してください'}`);
+  }
 }
 
 export async function postponeActionTaskWithClient(client: ActionTaskClient, userId: string, taskId: string, nextDueDate: Date): Promise<void> {

@@ -23,7 +23,7 @@ import { dedupePeople } from '../../logic/personPriority';
 import { REACTION_LABELS, reactionFromTemperatureLabel } from '../../logic/reactions';
 import { cancelContactNotification, scheduleContactNotification } from '../../notifications/notificationService';
 import { addOpenGaps, resolveGaps } from '../../storage/dataGapStorage';
-import { saveMessageCheck } from '../../storage/flowLogStorage';
+import { markMessageCheckSaved, saveMessageCheck } from '../../storage/flowLogStorage';
 import { updatePerson } from '../../storage/personStorage';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
@@ -54,7 +54,9 @@ export default function LineCheckPane({
   const [errorMessage, setErrorMessage] = useState('');
   const [copyNotice, setCopyNotice] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
+  const [saveWarning, setSaveWarning] = useState('');
   const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationSaving, setNotificationSaving] = useState(false);
 
   const candidates = useMemo(() => dedupePeople(people.filter((person) => !person.archivedAt)), [people]);
   const currentPersonId = selectedPersonId ?? personId ?? candidates[0]?.id;
@@ -74,6 +76,7 @@ export default function LineCheckPane({
     setErrorMessage('');
     setCopyNotice('');
     setSavedNotice(false);
+    setSaveWarning('');
   };
 
   const checkMessage = async () => {
@@ -134,6 +137,7 @@ export default function LineCheckPane({
       `注意点：${analysis.caution}`,
     ].join('\n');
 
+    let draftRowId: string | undefined;
     try {
       setSaving(true);
       const input = { person: selectedPerson, checkType, text: analysisInputText };
@@ -145,6 +149,7 @@ export default function LineCheckPane({
         text: messageText,
         analysis,
       });
+      draftRowId = messageCheckRowId;
 
       const saved = await updatePerson({
         ...selectedPerson,
@@ -181,8 +186,13 @@ export default function LineCheckPane({
         })),
       );
 
+      // saved_to_contact is the commit marker. It is written last so a
+      // partial failure remains visible in end-of-day reconciliation.
+      await markMessageCheckSaved(messageCheckRowId);
+
       onPersonUpdated(event.saved);
       setSavedNotice(true);
+      setSaveWarning('');
       Alert.alert(
         '人脈カードに保存しました',
         [
@@ -192,8 +202,14 @@ export default function LineCheckPane({
       );
       });
     } catch (error) {
-      // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
-      Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '文面確認の保存中にエラーが発生しました。');
+      if (draftRowId) {
+        const warning = '文面確認本体は未処理として保存しました。終業後チェックから再確認できます。';
+        setSavedNotice(true);
+        setSaveWarning(warning);
+        Alert.alert('人脈カードへの反映が未完了です', `${warning}\n${error instanceof Error ? error.message : ''}`);
+      } else {
+        Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '文面確認の保存中にエラーが発生しました。');
+      }
     } finally {
       setSaving(false);
     }
@@ -204,44 +220,42 @@ export default function LineCheckPane({
   };
 
   const applyLineReminder = async (option: string) => {
-    if (!selectedPerson) {
-      setNotificationOpen(false);
+    if (!selectedPerson || notificationSaving) {
       return;
     }
-
-    setNotificationOpen(false);
-
-    if (option === '通知なし') {
-      await cancelContactNotification(selectedPerson.notificationId);
-      const saved = await updatePerson({
-        ...selectedPerson,
-        notificationId: undefined,
-      });
-      onPersonUpdated(saved);
-      Alert.alert('通知なしにしました', '次回連絡通知は設定されていません。');
-      return;
-    }
-
-    const days = option.includes('明日') ? 1 : option.includes('1週間') ? 7 : 3;
-    const date = new Date();
-    date.setDate(date.getDate() + days);
-    date.setHours(9, 0, 0, 0);
-
-    let notificationId = selectedPerson.notificationId;
-    let notice = `${formatDateTime(date.toISOString())} に${selectedPerson.name}への連絡通知を設定しました。`;
+    setNotificationSaving(true);
     try {
-      notificationId = await scheduleContactNotification(selectedPerson, date);
-    } catch {
-      notice = `次回連絡日を ${formatDateTime(date.toISOString())} に設定しました（通知は設定できませんでした）。`;
-    }
+      if (option === '通知なし') {
+        await cancelContactNotification(selectedPerson.notificationId);
+        const saved = await updatePerson({ ...selectedPerson, notificationId: undefined });
+        onPersonUpdated(saved);
+        setNotificationOpen(false);
+        Alert.alert('通知なしにしました', '次回連絡通知は設定されていません。');
+        return;
+      }
 
-    const saved = await updatePerson({
-      ...selectedPerson,
-      nextContactAt: date.toISOString(),
-      notificationId,
-    });
-    onPersonUpdated(saved);
-    Alert.alert('通知を設定しました', notice);
+      const days = option.includes('明日') ? 1 : option.includes('1週間') ? 7 : 3;
+      const date = new Date();
+      date.setDate(date.getDate() + days);
+      date.setHours(9, 0, 0, 0);
+
+      let notificationId = selectedPerson.notificationId;
+      let notice = `${formatDateTime(date.toISOString())} に${selectedPerson.name}への連絡通知を設定しました。`;
+      try {
+        notificationId = await scheduleContactNotification(selectedPerson, date);
+      } catch {
+        notice = `次回連絡日を ${formatDateTime(date.toISOString())} に設定しました（通知は設定できませんでした）。`;
+      }
+
+      const saved = await updatePerson({ ...selectedPerson, nextContactAt: date.toISOString(), notificationId });
+      onPersonUpdated(saved);
+      setNotificationOpen(false);
+      Alert.alert('通知を設定しました', notice);
+    } catch (error) {
+      Alert.alert('通知設定に失敗しました', error instanceof Error ? error.message : 'もう一度お試しください。');
+    } finally {
+      setNotificationSaving(false);
+    }
   };
 
   if (people.length === 0) {
@@ -418,7 +432,8 @@ export default function LineCheckPane({
                 </Pressable>
               </View>
             </View>
-            {savedNotice ? <Text style={styles.successNotice}>人脈カードに保存しました</Text> : null}
+            {savedNotice && !saveWarning ? <Text style={styles.successNotice}>人脈カードに保存しました</Text> : null}
+            {saveWarning ? <Text style={styles.errorNotice}>{saveWarning}</Text> : null}
             {copyNotice ? <Text style={styles.successNotice}>{copyNotice}</Text> : null}
           </Section>
         </>
@@ -441,8 +456,13 @@ export default function LineCheckPane({
               </Pressable>
             </View>
             {LINE_NOTICE_OPTIONS.map((option) => (
-              <Pressable key={option} style={styles.personSelectCard} onPress={() => applyLineReminder(option)}>
-                <Text style={styles.personSelectName}>{option}</Text>
+              <Pressable
+                key={option}
+                disabled={notificationSaving}
+                style={[styles.personSelectCard, notificationSaving && styles.buttonDisabled]}
+                onPress={() => void applyLineReminder(option)}
+              >
+                <Text style={styles.personSelectName}>{notificationSaving ? '保存中...' : option}</Text>
               </Pressable>
             ))}
           </View>

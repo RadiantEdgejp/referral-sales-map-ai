@@ -6,6 +6,7 @@ vi.mock('../../src/storage/personStorage', () => ({ requireUserId: vi.fn() }));
 import {
   carryActionTasksToTomorrowWithClient,
   completeEndOfDayCheckWithClient,
+  mergeCarriedTaskIds,
   type EndOfDayPersistence,
   type EndOfDayReconciliation,
 } from '../../src/storage/endOfDayStorage';
@@ -52,6 +53,7 @@ function reconciliation(): EndOfDayReconciliation {
     unsavedMessageChecks: [],
     contactsMissingNextContact: [],
     unresolvedDataGaps: [],
+    carriedTaskIds: [],
   };
 }
 
@@ -72,6 +74,11 @@ function client(overrides: Partial<EndOfDayPersistence> = {}): EndOfDayPersisten
 }
 
 describe('Issue #21 終業後チェック永続化', () => {
+  it('画面再訪時に保存済みチェックと当日の繰越ログからタスクIDを復元する', () => {
+    expect(
+      mergeCarriedTaskIds(['task-1'], [{ source_id: 'task-2' }, { source_id: 'task-1' }, { source_id: null }]),
+    ).toEqual(['task-1', 'task-2']);
+  });
   it('未完了ActionTaskを明日へ更新し、同じタスクIDのInteractionLogを保存する', async () => {
     const db = client();
 

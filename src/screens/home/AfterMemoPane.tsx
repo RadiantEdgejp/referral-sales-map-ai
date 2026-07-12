@@ -150,6 +150,7 @@ export default function AfterMemoPane({
       `AIフィードバック：${suggestion.feedback}`,
     ];
 
+    let coreAfterMemoSaved = false;
     try {
       setSaving(true);
       const input = { person, answers, talkMemo, allInfoMemo, nextTodo };
@@ -167,6 +168,7 @@ export default function AfterMemoPane({
         salesRouteId: activeHandoff?.salesRouteId,
         calendarEventId: activeHandoff?.calendarEventId,
       });
+      coreAfterMemoSaved = true;
 
       const saved = await updatePerson({
         ...person,
@@ -223,8 +225,19 @@ export default function AfterMemoPane({
       );
       });
     } catch (error) {
-      // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
-      Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '後メモの保存中にエラーが発生しました。');
+      if (coreAfterMemoSaved) {
+        // The linked RPC already committed the memo, event, route and task in
+        // one transaction. Do not invite a duplicate retry when only optional
+        // ledger/gap enrichment failed.
+        setUpdatedNotice(true);
+        onPersonUpdated({ ...person, nextAction: suggestion.nextAction });
+        Alert.alert(
+          '後メモ本体は保存済みです',
+          `人物詳細の追加履歴または未確認事項の反映に失敗しました。再読込して内容を確認してください。\n${error instanceof Error ? error.message : ''}`,
+        );
+      } else {
+        Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '後メモの保存中にエラーが発生しました。');
+      }
     } finally {
       setSaving(false);
     }

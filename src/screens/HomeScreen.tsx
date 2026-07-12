@@ -56,16 +56,28 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
   const [events, setEvents] = useState<Awaited<ReturnType<typeof getCalendarEvents>>>([]);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [flowContext, setFlowContext] = useState<Pick<SalesFlowIds, 'salesRouteId' | 'calendarEventId'> | undefined>(undefined);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState('');
 
   const loadData = useCallback(async () => {
-    const [stored, storedTasks, storedEvents] = await Promise.all([
-      getPeople(),
-      getOpenActionTasks(),
-      getCalendarEvents(),
-    ]);
-    setPeople(stored);
-    setTasks(storedTasks);
-    setEvents(storedEvents);
+    setDataLoading(true);
+    setDataError('');
+    try {
+      const [stored, storedTasks, storedEvents] = await Promise.all([
+        getPeople(),
+        getOpenActionTasks(),
+        getCalendarEvents(),
+      ]);
+      setPeople(stored);
+      setTasks(storedTasks);
+      setEvents(storedEvents);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'もう一度お試しください。';
+      setDataError(message);
+      throw error;
+    } finally {
+      setDataLoading(false);
+    }
   }, []);
 
   useFocusEffect(
@@ -167,8 +179,14 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             );
           }}
           onRefresh={() => {
-            setPlanUpdated(true);
-            Alert.alert('今日の計画を更新しました', '人脈カードの最新データから営業地図を再生成しました。');
+            void loadData()
+              .then(() => {
+                setPlanUpdated(true);
+                Alert.alert('今日の計画を更新しました', '最新の保存データを読み込みました。');
+              })
+              .catch((error) => {
+                Alert.alert('更新に失敗しました', error instanceof Error ? error.message : 'もう一度お試しください。');
+              });
           }}
           onAdd={() => navigation.navigate('AddPerson')}
         />
@@ -183,6 +201,8 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             onOpenTask={openTask}
             onAddSchedule={() => setScheduleOpen(true)}
             onReload={loadData}
+            loading={dataLoading}
+            loadError={dataError}
           />
         ) : activeTab === 'people' ? (
           <PeoplePane
@@ -249,7 +269,39 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
           <EndOfDayPane
             people={activePeople}
             onPersonUpdated={handlePersonUpdated}
-            onAfter={() => setActiveTab('after')}
+            onAfter={async (target) => {
+              setFocusPersonId(target.personId);
+              setFlowContext(
+                target.salesRouteId && target.calendarEventId
+                  ? { salesRouteId: target.salesRouteId, calendarEventId: target.calendarEventId }
+                  : undefined,
+              );
+              if (!target.calendarEventId) {
+                setAfterHandoff(undefined);
+                setActiveTab('after');
+                return;
+              }
+              try {
+                const savedNav = await getAfterMemoHandoffForEvent(target.calendarEventId);
+                const matchingTask = tasks.find(
+                  (task) => task.calendarEventId === target.calendarEventId && task.actionType === 'after_memo',
+                );
+                setAfterHandoff({
+                  personId: target.personId,
+                  questions: savedNav.questions,
+                  preMeetingNavRowId: savedNav.preMeetingNavRowId,
+                  salesRouteId: target.salesRouteId,
+                  calendarEventId: target.calendarEventId,
+                  afterMemoTaskId: matchingTask?.id,
+                });
+                setActiveTab('after');
+              } catch (error) {
+                Alert.alert(
+                  '後メモを開けません',
+                  error instanceof Error ? error.message : '対象の予定前ナビを確認してください。',
+                );
+              }
+            }}
             onHome={() => setActiveTab('home')}
             onCoach={(initialPrompt) => navigation.navigate('CoachChat', { initialPrompt })}
           />
@@ -285,7 +337,9 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             setScheduleOpen(false);
             setFocusPersonId(person.id);
             setFlowContext(flow);
-            loadData().catch(() => undefined);
+            void loadData().catch((error) => {
+              Alert.alert('予定は保存されました', `一覧の再読込に失敗しました。再読込してください。\n${error instanceof Error ? error.message : ''}`);
+            });
             Alert.alert('予定を保存しました', '予定前ナビと後メモのタスクを作成しました。');
             if (openPreMeeting) setActiveTab('pre');
           }}

@@ -62,24 +62,31 @@ export default function PeoplePane({
   onPersonUpdated: (person: Person) => void;
 }) {
   const [notifyPerson, setNotifyPerson] = useState<Person | null>(null);
+  const [notifying, setNotifying] = useState(false);
 
   const applyNotifyOption = async (days: number | null) => {
-    if (!notifyPerson) {
+    if (!notifyPerson || notifying) {
       return;
     }
+    setNotifying(true);
+    try {
+      if (days === null) {
+        const saved = await clearNextContact(notifyPerson);
+        onPersonUpdated(saved);
+        setNotifyPerson(null);
+        Alert.alert('通知なしにしました', '次回連絡通知は設定されていません。');
+        return;
+      }
 
-    setNotifyPerson(null);
-
-    if (days === null) {
-      const saved = await clearNextContact(notifyPerson);
+      const { saved, notice } = await applyNextContact(notifyPerson, nextContactDate(days));
       onPersonUpdated(saved);
-      Alert.alert('通知なしにしました', '次回連絡通知は設定されていません。');
-      return;
+      setNotifyPerson(null);
+      Alert.alert('通知を設定しました', notice);
+    } catch (error) {
+      Alert.alert('通知設定に失敗しました', error instanceof Error ? error.message : 'もう一度お試しください。');
+    } finally {
+      setNotifying(false);
     }
-
-    const { saved, notice } = await applyNextContact(notifyPerson, nextContactDate(days));
-    onPersonUpdated(saved);
-    Alert.alert('通知を設定しました', notice);
   };
 
   return (
@@ -175,8 +182,13 @@ export default function PeoplePane({
             </Pressable>
           </View>
           {NOTIFY_OPTIONS.map((option) => (
-            <Pressable key={option.label} style={styles.personSelectCard} onPress={() => applyNotifyOption(option.days)}>
-              <Text style={styles.personSelectName}>{option.label}</Text>
+            <Pressable
+              key={option.label}
+              disabled={notifying}
+              style={[styles.personSelectCard, notifying && styles.buttonDisabled]}
+              onPress={() => void applyNotifyOption(option.days)}
+            >
+              <Text style={styles.personSelectName}>{notifying ? '保存中...' : option.label}</Text>
             </Pressable>
           ))}
         </View>

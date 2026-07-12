@@ -47,5 +47,6 @@ test('settings shows DB-backed account status and the demo action performs a rea
   assert.match(settings, /profile\?\.subscriptionStatus/);
   assert.match(settings, /AIモード/);
   assert.match(settings, /データ保存先/);
-  assert.match(settings, /await savePeople\(MOCK_PEOPLE\)/);
+  assert.match(settings, /selectMissingDemoPeople\(existing, MOCK_PEOPLE\)/);
+  assert.match(settings, /await savePeople\(missing\)/);
 });

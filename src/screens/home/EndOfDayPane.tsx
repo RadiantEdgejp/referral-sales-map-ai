@@ -37,7 +37,7 @@ export default function EndOfDayPane({
 }: {
   people: Person[];
   onPersonUpdated: (person: Person) => void;
-  onAfter: () => void;
+  onAfter: (target: { personId: string; salesRouteId?: string; calendarEventId?: string }) => void;
   onHome: () => void;
   onCoach: (initialPrompt: string) => void;
 }) {
@@ -53,7 +53,9 @@ export default function EndOfDayPane({
     setLoading(true);
     setLoadError('');
     try {
-      setData(await loadEndOfDayReconciliation());
+      const loaded = await loadEndOfDayReconciliation();
+      setData(loaded);
+      setCarriedTaskIds(loaded.carriedTaskIds);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : '終業後チェックを取得できませんでした。');
     } finally {
@@ -183,7 +185,11 @@ export default function EndOfDayPane({
             target={personName(data, event.contactId)}
             body={`「${event.title}」は終了していますが、保存済み後メモが紐づいていません。`}
             button="後メモを入力"
-            onPress={onAfter}
+            onPress={() => onAfter({
+              personId: event.contactId,
+              salesRouteId: event.salesRouteId ?? undefined,
+              calendarEventId: event.id,
+            })}
           />
         ))}
         {data.unsavedAfterMemos.map((memo) => (
@@ -193,7 +199,11 @@ export default function EndOfDayPane({
             target={personName(data, memo.contactId)}
             body={memo.summary || '整理結果はありますが、人脈カードに保存されていません。'}
             button="後メモを確認"
-            onPress={onAfter}
+            onPress={() => onAfter({
+              personId: memo.contactId,
+              salesRouteId: memo.salesRouteId ?? undefined,
+              calendarEventId: memo.calendarEventId ?? undefined,
+            })}
           />
         ))}
         {data.unsavedMessageChecks.map((check) => (

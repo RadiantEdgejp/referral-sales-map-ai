@@ -5,7 +5,8 @@ import { useAuth } from '../auth/AuthContext';
 import { CONTACT_EMAIL, type LegalDocKey } from '../legal/legalContent';
 import { updateProfile } from '../storage/profileStorage';
 import { MOCK_PEOPLE } from '../data/mockPeople';
-import { savePeople } from '../storage/personStorage';
+import { selectMissingDemoPeople } from '../logic/demoPeople';
+import { getPeople, savePeople } from '../storage/personStorage';
 import type { ScreenProps } from '../types/navigation';
 
 const LEGAL_LINKS: { doc: LegalDocKey; label: string; icon: typeof FileText }[] = [
@@ -75,8 +76,14 @@ export default function SettingsScreen({ navigation }: ScreenProps<'Settings'>) 
     setSeedingDemo(true);
     setNotice('');
     try {
-      await savePeople(MOCK_PEOPLE);
-      setNotice('デモ人物3件を追加しました。既存データは変更していません。');
+      const existing = await getPeople();
+      const missing = selectMissingDemoPeople(existing, MOCK_PEOPLE);
+      await savePeople(missing);
+      setNotice(
+        missing.length > 0
+          ? `デモ人物${missing.length}件を追加しました。既存データは変更していません。`
+          : 'デモ人物はすでに追加済みです。既存データは変更していません。',
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'デモ人物の追加に失敗しました。');
     } finally {

@@ -15,6 +15,8 @@ function query(table: string) {
     update: (payload: unknown) => { call.operation = 'update'; call.payload = payload; return builder; },
     eq: (...args: unknown[]) => { call.filters.push(['eq', ...args]); return builder; },
     in: (...args: unknown[]) => { call.filters.push(['in', ...args]); return builder; },
+    lte: (...args: unknown[]) => { call.filters.push(['lte', ...args]); return builder; },
+    not: (...args: unknown[]) => { call.filters.push(['not', ...args]); return builder; },
     order: (...args: unknown[]) => { call.filters.push(['order', ...args]); return Promise.resolve(db.result); },
     single: () => Promise.resolve(db.result),
     then: (resolve: (value: Result) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve(db.result).then(resolve, reject),
@@ -29,9 +31,16 @@ vi.mock('../../src/storage/personStorage', () => ({
 }));
 
 import { completeActionTask, getOpenActionTasks, postponeActionTask } from '../../src/storage/actionTaskStorage';
+import { requiresWorkflowSave } from '../../src/storage/actionTaskCore';
 
 describe('ActionTask UI persistence', () => {
   beforeEach(() => { db.calls.length = 0; db.result = { data: [], error: null }; });
+
+  it('requires the real workflow save for pre-meeting and after-memo tasks', () => {
+    expect(requiresWorkflowSave({ actionType: 'pre_meeting' })).toBe(true);
+    expect(requiresWorkflowSave({ actionType: 'after_memo' })).toBe(true);
+    expect(requiresWorkflowSave({ actionType: 'follow_up' })).toBe(false);
+  });
 
   it('loads only persisted open tasks and preserves linked route/event IDs', async () => {
     db.result = { data: [{
@@ -43,6 +52,7 @@ describe('ActionTask UI persistence', () => {
       id: 'task-1', personId: 'contact-1', salesRouteId: 'route-1', calendarEventId: 'event-1',
     })]);
     expect(db.calls[0].filters).toContainEqual(['in', 'status', ['open', 'pending']]);
+    expect(db.calls[0].filters).toContainEqual(['lte', 'due_date', expect.any(String)]);
   });
 
   it('persists completion to action_tasks for the signed-in user', async () => {
@@ -50,6 +60,7 @@ describe('ActionTask UI persistence', () => {
     await completeActionTask('task-1');
     expect(db.calls[0]).toMatchObject({ table: 'action_tasks', operation: 'update', payload: { status: 'completed' } });
     expect(db.calls[0].filters).toContainEqual(['eq', 'user_id', 'user-a']);
+    expect(db.calls[0].filters).toContainEqual(['not', 'action_type', 'in', '("pre_meeting","after_memo")']);
   });
 
   it('persists postponement instead of changing Contact.nextContactDate', async () => {

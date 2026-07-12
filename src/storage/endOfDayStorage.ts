@@ -31,6 +31,7 @@ export type EndOfDayEvent = {
 export type EndOfDayAfterMemo = {
   id: string;
   contactId: string;
+  salesRouteId: string | null;
   calendarEventId: string | null;
   summary: string;
   savedToContact: boolean;
@@ -70,6 +71,7 @@ export type EndOfDayReconciliation = {
   unsavedMessageChecks: EndOfDayMessageDraft[];
   contactsMissingNextContact: EndOfDayContactGap[];
   unresolvedDataGaps: EndOfDayGap[];
+  carriedTaskIds: string[];
 };
 
 type TaskRow = {
@@ -163,11 +165,19 @@ function isCancelled(status: string) {
   return CANCELLED_STATUSES.has(status.toLowerCase());
 }
 
+export function mergeCarriedTaskIds(saved: unknown, logRows: Array<{ source_id: string | null }>): string[] {
+  const savedIds = Array.isArray(saved) ? saved.filter((value): value is string => typeof value === 'string') : [];
+  const loggedIds = logRows
+    .map((row) => row.source_id)
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+  return [...new Set([...savedIds, ...loggedIds])];
+}
+
 export async function loadEndOfDayReconciliation(now = new Date()): Promise<EndOfDayReconciliation> {
   const userId = await requireUserId();
   const { start, end, date } = localDayBounds(now);
 
-  const [contactsResult, tasksResult, eventsResult, afterMemosResult, messageChecksResult, gapsResult] = await Promise.all([
+  const [contactsResult, tasksResult, eventsResult, afterMemosResult, messageChecksResult, gapsResult, checkResult, carryLogsResult] = await Promise.all([
     supabase.from('contacts').select('id,name,next_contact_date').eq('user_id', userId).is('archived_at', null),
     supabase
       .from('action_tasks')
@@ -184,7 +194,7 @@ export async function loadEndOfDayReconciliation(now = new Date()): Promise<EndO
       .order('start_at', { ascending: true }),
     supabase
       .from('after_memos')
-      .select('id,contact_id,calendar_event_id,summary,saved_to_contact,created_at')
+      .select('id,contact_id,sales_route_id,calendar_event_id,summary,saved_to_contact,created_at')
       .eq('user_id', userId)
       .gte('created_at', start)
       .lte('created_at', end)
@@ -203,6 +213,19 @@ export async function loadEndOfDayReconciliation(now = new Date()): Promise<EndO
       .eq('user_id', userId)
       .eq('status', 'open')
       .order('created_at', { ascending: true }),
+    supabase
+      .from('end_of_day_checks')
+      .select('tomorrow_tasks')
+      .eq('user_id', userId)
+      .eq('date', date)
+      .maybeSingle(),
+    supabase
+      .from('interaction_logs')
+      .select('source_id')
+      .eq('user_id', userId)
+      .eq('type', 'task_carried_over')
+      .gte('happened_at', start)
+      .lte('happened_at', end),
   ]);
 
   const failures = [
@@ -212,6 +235,8 @@ export async function loadEndOfDayReconciliation(now = new Date()): Promise<EndO
     ['after_memos', afterMemosResult.error],
     ['message_checks', messageChecksResult.error],
     ['data_gaps', gapsResult.error],
+    ['end_of_day_checks', checkResult.error],
+    ['interaction_logs', carryLogsResult.error],
   ].filter(([, error]) => error) as Array<[string, { message: string }]>;
   if (failures.length > 0) {
     throw new Error(`終業後チェックの取得に失敗しました（${failures.map(([table, error]) => `${table}: ${error.message}`).join(' / ')}）`);
@@ -243,6 +268,7 @@ export async function loadEndOfDayReconciliation(now = new Date()): Promise<EndO
   const afterMemos = ((afterMemosResult.data ?? []) as Array<{
     id: string;
     contact_id: string;
+    sales_route_id: string | null;
     calendar_event_id: string | null;
     summary: string;
     saved_to_contact: boolean;
@@ -250,6 +276,7 @@ export async function loadEndOfDayReconciliation(now = new Date()): Promise<EndO
   }>).map((row) => ({
     id: row.id,
     contactId: row.contact_id,
+    salesRouteId: row.sales_route_id,
     calendarEventId: row.calendar_event_id,
     summary: row.summary,
     savedToContact: row.saved_to_contact,
@@ -306,6 +333,10 @@ export async function loadEndOfDayReconciliation(now = new Date()): Promise<EndO
       severity: row.severity,
       targetScreen: row.target_screen,
     })),
+    carriedTaskIds: mergeCarriedTaskIds(
+      (checkResult.data as { tomorrow_tasks?: unknown } | null)?.tomorrow_tasks,
+      (carryLogsResult.data ?? []) as Array<{ source_id: string | null }>,
+    ),
   };
 }
 

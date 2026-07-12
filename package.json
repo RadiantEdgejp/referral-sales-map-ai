@@ -39,7 +39,10 @@
     "test:node": "node --import ./tests/node/register-loader.mjs --import tsx --test \"src/**/__tests__/*.test.ts\" \"tests/**/*.test.mjs\"",
     "test:watch": "vitest",
     "doctor": "expo-doctor",
-    "export:web": "expo export --platform web"
+    "audit:security": "npm audit --audit-level=high",
+    "export:web": "expo export --platform web",
+    "export:android": "expo export --platform android --output-dir .tmp/export-android",
+    "export:ios": "expo export --platform ios --output-dir .tmp/export-ios"
   },
   "private": true
 }

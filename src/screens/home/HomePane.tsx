@@ -2,6 +2,7 @@ import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import MiniButton from '../../components/MiniButton';
 import Section from '../../components/Section';
 import { completeActionTask, postponeActionTask, type PersistedActionTask } from '../../storage/actionTaskStorage';
+import { requiresWorkflowSave } from '../../storage/actionTaskCore';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
 import { homeStyles as styles } from './homeStyles';
@@ -39,6 +40,8 @@ export default function HomePane({
   onOpenTask,
   onAddSchedule,
   onReload,
+  loading,
+  loadError,
 }: {
   people: Person[];
   tasks: PersistedActionTask[];
@@ -48,6 +51,8 @@ export default function HomePane({
   onOpenTask: (task: PersistedActionTask) => void;
   onAddSchedule: () => void;
   onReload: () => Promise<void>;
+  loading: boolean;
+  loadError: string;
 }) {
   const complete = async (task: PersistedActionTask) => {
     try {
@@ -74,6 +79,15 @@ export default function HomePane({
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      {loadError ? (
+        <Section title="営業データを読み込めませんでした">
+          <Text style={styles.errorNotice}>{loadError}</Text>
+          <Pressable style={styles.primaryCta} onPress={() => void onReload()}>
+            <Text style={styles.primaryCtaText}>再試行</Text>
+          </Pressable>
+        </Section>
+      ) : null}
+      {loading ? <Text style={styles.emptyText}>最新データを読み込み中...</Text> : null}
       <Section title="今日の営業テーマ">
         <Text style={styles.shortReason}>期限が来ている行動を上から処理し、会話後の情報を人脈カードへ残す。</Text>
         {planUpdated ? <Text style={styles.updatedNotice}>最新のタスクと予定を読み込みました</Text> : null}
@@ -98,7 +112,7 @@ export default function HomePane({
               <Text style={styles.rowMeta}>期限：{formatDateTime(task.dueDate)}</Text>
               <View style={styles.rowButtons}>
                 <MiniButton label="開く" onPress={() => onOpenTask(task)} />
-                <MiniButton label="完了" onPress={() => complete(task)} />
+                {!requiresWorkflowSave(task) ? <MiniButton label="完了" onPress={() => complete(task)} /> : null}
                 <MiniButton label="延期" onPress={() => postpone(task)} />
                 <MiniButton label="人物" onPress={() => onOpenPerson(task.personId)} />
               </View>

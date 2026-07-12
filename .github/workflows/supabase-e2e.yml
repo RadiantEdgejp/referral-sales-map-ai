@@ -1,0 +1,33 @@
+name: Supabase E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-real-database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TZ: Asia/Tokyo
+      SUPABASE_TEST_URL: ${{ secrets.SUPABASE_TEST_URL }}
+      SUPABASE_TEST_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - run: npm ci
+      - name: Require a dedicated test project
+        run: |
+          test -n "$SUPABASE_TEST_URL"
+          test -n "$SUPABASE_TEST_ANON_KEY"
+      - name: Verify linked sales flow and RLS
+        run: node tests/e2e/coreSalesFlow.local.mjs
+      - name: Verify UI storage contracts against Supabase
+        run: node tests/e2e/issue19UiStorage.local.mjs
+      - name: Verify end-of-day persistence and RLS
+        run: node tests/e2e/endOfDay.local.mjs

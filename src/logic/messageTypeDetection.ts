@@ -11,6 +11,7 @@ export type MessageTypeDetection = {
 
 const RECEIVED_MARKERS = /(?:届いた|来た|返信|相手(?:から|が)|と言われ|とのこと|受信)/;
 const OUTBOUND_MARKERS = /(?:送りたい|送る|伝えたい|聞きたい|お願いしたい|返信したい|文面を作|添削)/;
+const LIKELY_SHORT_REPLY = /^(?:ありがとうございます|承知しました|了解しました|かしこまりました|ぜひお願いします|検討します|また連絡します)(?:[。！!]|$)/;
 
 export function detectMessageType(text: string, intention = ''): MessageTypeDetection {
   const source = `${intention}\n${text}`.trim();
@@ -31,6 +32,9 @@ export function detectMessageType(text: string, intention = ''): MessageTypeDete
   }
   if (RECEIVED_MARKERS.test(normalized) || /^[「『].+[」』]$/.test(normalized)) {
     return detection('受信文チェック', '受信', '受信文', '相手から届いた文面として分析します。');
+  }
+  if (!OUTBOUND_MARKERS.test(normalized) && LIKELY_SHORT_REPLY.test(normalized)) {
+    return detection('受信文チェック', '受信', '受信文', '相手から届いた可能性が高い短い返信として、温度感と返信方針を確認します。');
   }
   if (/(?:返信|返したい)/.test(normalized)) {
     return detection('返信作成', '送信', '返信作成', '相手への返信を作る意図が含まれています。');

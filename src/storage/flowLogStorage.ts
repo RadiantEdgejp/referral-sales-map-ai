@@ -192,12 +192,29 @@ export async function saveMessageCheck(input: {
     contact_update_proposal: analysis.cardUpdate,
     next_action: analysis.nextAction,
     feedback: `良い点: ${analysis.feedbackGood}\n改善点: ${analysis.feedbackImprove}`,
-    saved_to_contact: true,
+    // Finalize only after the contact, ledger and gap updates succeed. If a
+    // later write fails, end-of-day reconciliation can recover this draft.
+    saved_to_contact: false,
   });
   if (error) {
     throw new Error(`文面確認の保存に失敗しました: ${error.message}`);
   }
   return rowId;
+}
+
+export async function markMessageCheckSaved(rowId: string): Promise<void> {
+  const userId = await requireUserId();
+  const { data, error } = await supabase
+    .from('message_checks')
+    .update({ saved_to_contact: true })
+    .eq('id', rowId)
+    .eq('user_id', userId)
+    .eq('saved_to_contact', false)
+    .select('id')
+    .single();
+  if (error || !data) {
+    throw new Error(`文面確認の確定に失敗しました: ${error?.message ?? '対象がありません'}`);
+  }
 }
 
 export async function saveCoachLog(input: {
