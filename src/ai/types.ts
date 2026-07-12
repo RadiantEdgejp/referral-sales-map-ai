@@ -38,6 +38,56 @@ export type LlmResult<T> = {
 export type ContactAIContext = {
   contactId: string;
   contactName: string;
+  generatedAt: string;
+  contact: {
+    industry: string;
+    relationship: string;
+    company?: string;
+    role?: string;
+    currentGoal: string;
+    currentStatus: string;
+    currentHypothesis: string;
+    nextStep: string;
+    requiredActions: string[];
+    notes: string;
+    classification: string[];
+    tags: string[];
+    lastContactDate?: string;
+    nextContactDate?: string;
+  };
+  salesRoute?: {
+    id: string;
+    routeType: string;
+    goal: string;
+    currentStage: string;
+    nextStep: string;
+    priority: string;
+    status: string;
+    reason: string;
+    confidence: number;
+  };
+  calendarEvent?: {
+    id: string;
+    title: string;
+    eventType: string;
+    startAt: string;
+    endAt: string;
+    purpose: string;
+    meetingMethod: string;
+    status: string;
+  };
+  preMeetingNav?: {
+    id: string;
+    purpose: string;
+    goalToday: string;
+    mainQuestions: string[];
+    itemsToRecordAfter: string[];
+    status: string;
+  };
+  confirmedFacts: string[];
+  hypotheses: string[];
+  unknowns: string[];
+  cautions: string[];
   /** 行動→反応の台帳（interaction_logs、新しい順） */
   interactions: Array<{
     rowId: string;
@@ -50,13 +100,45 @@ export type ContactAIContext = {
     happenedAt: string;
   }>;
   /** after_memos の要約（新しい順） */
-  afterMemoSummaries: Array<{ createdAt: string; summary: string; nextAction: string }>;
+  afterMemoSummaries: Array<{
+    createdAt: string;
+    summary: string;
+    extractedInfo: string[];
+    temperature: string;
+    interestDirection: string;
+    nextProgress: string;
+    nextAction: string;
+    nextQuestions: string[];
+  }>;
   /** message_checks の温度感履歴（新しい順） */
-  temperatureHistory: Array<{ createdAt: string; temperature: string; judgement: string }>;
+  temperatureHistory: Array<{
+    createdAt: string;
+    checkType: string;
+    extractedInfo: string[];
+    temperature: string;
+    judgement: string;
+    replyPolicy: string;
+    replyTextSummary: string;
+    nextAction: string;
+    feedback: string;
+  }>;
+  updateHistories: Array<{
+    createdAt: string;
+    sourceType: string;
+    summary: string;
+    updatedFields: string[];
+  }>;
   /** 未完了 action_tasks */
   openTasks: Array<{ title: string; dueDate: string }>;
   /** 未解決 data_gaps（質問生成の根拠） */
-  openGaps: Array<{ gapType: string; title: string; reason: string; createdAt: string }>;
+  openGaps: Array<{
+    gapType: string;
+    title: string;
+    reason: string;
+    severity: string;
+    targetScreen: string;
+    createdAt: string;
+  }>;
 };
 
 export type PersonAnalysisInput = {
