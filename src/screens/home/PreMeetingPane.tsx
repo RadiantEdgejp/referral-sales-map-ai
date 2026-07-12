@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
@@ -23,6 +23,8 @@ import type { AfterMemoHandoff } from './types';
 export default function PreMeetingPane({
   people,
   initialPersonId,
+  salesRouteId,
+  calendarEventId,
   onAfter,
   onLine,
   onPersonUpdated,
@@ -32,6 +34,8 @@ export default function PreMeetingPane({
 }: {
   people: Person[];
   initialPersonId?: string;
+  salesRouteId?: string;
+  calendarEventId?: string;
   onAfter: (personId?: string, handoff?: AfterMemoHandoff) => void;
   onLine: (personId?: string) => void;
   onPersonUpdated: (person: Person) => void;
@@ -52,6 +56,14 @@ export default function PreMeetingPane({
   const [showNavDetails, setShowNavDetails] = useState(false);
   const [personPickerOpen, setPersonPickerOpen] = useState(false);
   const [showMoreNavActions, setShowMoreNavActions] = useState(false);
+
+  useEffect(() => {
+    if (!initialPersonId) return;
+    setSelectedPersonId(initialPersonId);
+    setNav(null);
+    setNavRowId(undefined);
+    setErrorMessage('');
+  }, [calendarEventId, initialPersonId]);
 
   const uniquePeople = useMemo(() => dedupePeople(people), [people]);
   const selectedPerson = useMemo(() => {
@@ -110,6 +122,8 @@ export default function PreMeetingPane({
         questions: nav.questions,
         preMeetingNavRowId: navRowId,
         personId: currentPersonId,
+        salesRouteId,
+        calendarEventId,
       });
       return;
     }
@@ -132,7 +146,7 @@ export default function PreMeetingPane({
       const saved = await persistReviewedResult(
         nav,
         (reviewed) => assertPreMeetingSafe(input, reviewed),
-        () => savePreMeetingNav({ person: selectedPerson, actionType, memo, nav }),
+        () => savePreMeetingNav({ person: selectedPerson, actionType, memo, nav, salesRouteId, calendarEventId }),
       );
       setNavRowId(saved.rowId);
       Alert.alert('予定前ナビを保存しました', '確認したナビと質問を保存しました。後メモへそのまま引き継げます。');

@@ -164,6 +164,8 @@ export default function AfterMemoPane({
         nextTodo,
         suggestion,
         preMeetingNavRowId: activeHandoff?.preMeetingNavRowId,
+        salesRouteId: activeHandoff?.salesRouteId,
+        calendarEventId: activeHandoff?.calendarEventId,
       });
 
       const saved = await updatePerson({

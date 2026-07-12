@@ -3,35 +3,37 @@ import { Alert, Pressable, SafeAreaView, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   Bot,
+  CalendarDays,
   ClipboardPenLine,
-  Compass,
   House,
   MessageSquareText,
   Moon,
   UsersRound,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { MOCK_PEOPLE } from '../data/mockPeople';
 import { dateValue, formatTime, getDueState, matchesIndustryFilter, sortPeople } from '../logic/personPriority';
 import type { SortMode } from '../logic/personPriority';
-import { createTodayActions } from '../logic/todayActions';
-import { getPeople, savePeople } from '../storage/personStorage';
+import { getAfterMemoHandoffForEvent, getCalendarEvents, getOpenActionTasks, type PersistedActionTask } from '../storage/actionTaskStorage';
+import { getPeople } from '../storage/personStorage';
+import type { SalesFlowIds } from '../storage/salesFlowStorage';
 import type { ScreenProps } from '../types/navigation';
 import type { Person, PersonCategory } from '../types/person';
 import AfterMemoPane from './home/AfterMemoPane';
+import CalendarPane from './home/CalendarPane';
 import EndOfDayPane from './home/EndOfDayPane';
 import HomeHeader from './home/HomeHeader';
 import HomePane from './home/HomePane';
 import LineCheckPane from './home/LineCheckPane';
 import PeoplePane from './home/PeoplePane';
 import PreMeetingPane from './home/PreMeetingPane';
+import ScheduleModal from './home/ScheduleModal';
 import { homeStyles as styles } from './home/homeStyles';
 import type { AfterMemoHandoff, MainTab } from './home/types';
 
 const NAV_ITEMS: Array<{ tab: MainTab; Icon: LucideIcon; label: string; hint: string }> = [
   { tab: 'home', Icon: House, label: 'ホーム', hint: 'ホーム' },
   { tab: 'people', Icon: UsersRound, label: '人脈', hint: '人脈カード' },
-  { tab: 'pre', Icon: Compass, label: '予定前', hint: '予定前ナビ' },
+  { tab: 'calendar', Icon: CalendarDays, label: '予定', hint: '予定とカレンダー' },
   { tab: 'after', Icon: ClipboardPenLine, label: '後メモ', hint: '後メモ' },
   { tab: 'line', Icon: MessageSquareText, label: '文確認', hint: 'LINE文チェック' },
   { tab: 'end', Icon: Moon, label: '終了後', hint: '終業後チェック' },
@@ -50,27 +52,28 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
   const [planUpdated, setPlanUpdated] = useState(false);
   const [focusPersonId, setFocusPersonId] = useState<string | undefined>(undefined);
   const [afterHandoff, setAfterHandoff] = useState<AfterMemoHandoff | undefined>(undefined);
+  const [tasks, setTasks] = useState<PersistedActionTask[]>([]);
+  const [events, setEvents] = useState<Awaited<ReturnType<typeof getCalendarEvents>>>([]);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [flowContext, setFlowContext] = useState<Pick<SalesFlowIds, 'salesRouteId' | 'calendarEventId'> | undefined>(undefined);
 
-  const loadPeople = useCallback(async () => {
-    const stored = await getPeople();
-    const missingMocks = MOCK_PEOPLE.filter(
-      (mockPerson) => !stored.some((person) => person.id === mockPerson.id),
-    );
-
-    if (missingMocks.length > 0) {
-      const merged = [...missingMocks, ...stored];
-      await savePeople(merged);
-      setPeople(merged);
-      return;
-    }
-
+  const loadData = useCallback(async () => {
+    const [stored, storedTasks, storedEvents] = await Promise.all([
+      getPeople(),
+      getOpenActionTasks(),
+      getCalendarEvents(),
+    ]);
     setPeople(stored);
+    setTasks(storedTasks);
+    setEvents(storedEvents);
   }, []);
 
   useFocusEffect(
     useCallback(() => {
-      loadPeople();
-    }, [loadPeople]),
+      loadData().catch((error) => {
+        Alert.alert('営業データの読込に失敗しました', error instanceof Error ? error.message : 'もう一度お試しください。');
+      });
+    }, [loadData]),
   );
 
   const activePeople = useMemo(() => people.filter((person) => !person.archivedAt), [people]);
@@ -78,7 +81,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
     setPeople((current) => current.map((item) => (item.id === updated.id ? updated : item)));
   }, []);
 
-  const actions = useMemo(() => createTodayActions(activePeople), [activePeople]);
+  const firstTaskPersonId = tasks[0]?.personId;
   const filteredPeople = useMemo(() => {
     const normalized = query.trim().toLowerCase();
 
@@ -120,6 +123,32 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
     setActiveTab(tab);
   };
 
+  const openTask = async (task: PersistedActionTask) => {
+    setFocusPersonId(task.personId);
+    setFlowContext({
+      salesRouteId: task.salesRouteId,
+      calendarEventId: task.calendarEventId,
+    });
+    if (task.targetScreen === 'AfterMemo' || task.actionType === 'after_memo') {
+      try {
+        const savedNav = await getAfterMemoHandoffForEvent(task.calendarEventId);
+        setAfterHandoff({
+          personId: task.personId,
+          questions: savedNav.questions,
+          preMeetingNavRowId: savedNav.preMeetingNavRowId,
+          salesRouteId: task.salesRouteId,
+          calendarEventId: task.calendarEventId,
+          afterMemoTaskId: task.id,
+        });
+        setActiveTab('after');
+      } catch (error) {
+        Alert.alert('後メモを開けません', error instanceof Error ? error.message : '先に予定前ナビを保存してください。');
+      }
+      return;
+    }
+    setActiveTab('pre');
+  };
+
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
@@ -147,10 +176,13 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
         {activeTab === 'home' ? (
           <HomePane
             people={activePeople}
-            actions={actions}
+            tasks={tasks}
+            events={events}
             planUpdated={planUpdated}
             onOpenPerson={openPerson}
-            onPersonUpdated={handlePersonUpdated}
+            onOpenTask={openTask}
+            onAddSchedule={() => setScheduleOpen(true)}
+            onReload={loadData}
           />
         ) : activeTab === 'people' ? (
           <PeoplePane
@@ -168,10 +200,21 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             onLineCheck={(person) => goToTab('line', person.id)}
             onPersonUpdated={handlePersonUpdated}
           />
+        ) : activeTab === 'calendar' ? (
+          <CalendarPane
+            people={activePeople}
+            events={events}
+            tasks={tasks}
+            onAdd={() => setScheduleOpen(true)}
+            onOpenTask={openTask}
+            onOpenPerson={openPerson}
+          />
         ) : activeTab === 'pre' ? (
           <PreMeetingPane
             people={activePeople}
-            initialPersonId={focusPersonId ?? actions[0]?.personId}
+            initialPersonId={focusPersonId ?? firstTaskPersonId}
+            salesRouteId={flowContext?.salesRouteId}
+            calendarEventId={flowContext?.calendarEventId}
             onAfter={(personId, handoff) => {
               setAfterHandoff(handoff);
               goToTab('after', personId);
@@ -185,7 +228,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
         ) : activeTab === 'after' ? (
           <AfterMemoPane
             people={activePeople}
-            personId={focusPersonId ?? actions[0]?.personId}
+            personId={focusPersonId ?? firstTaskPersonId}
             handoff={afterHandoff}
             onPersonUpdated={handlePersonUpdated}
             onLine={(personId) => goToTab('line', personId)}
@@ -196,7 +239,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
         ) : activeTab === 'line' ? (
           <LineCheckPane
             people={activePeople}
-            personId={focusPersonId ?? actions[0]?.personId}
+            personId={focusPersonId ?? firstTaskPersonId}
             onPersonUpdated={handlePersonUpdated}
             onAfter={(personId) => goToTab('after', personId)}
             onOpenPerson={openPerson}
@@ -234,6 +277,19 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             </Pressable>
           </View>
         ) : null}
+        <ScheduleModal
+          visible={scheduleOpen}
+          people={activePeople}
+          onClose={() => setScheduleOpen(false)}
+          onSaved={(person, flow, openPreMeeting) => {
+            setScheduleOpen(false);
+            setFocusPersonId(person.id);
+            setFlowContext(flow);
+            loadData().catch(() => undefined);
+            Alert.alert('予定を保存しました', '予定前ナビと後メモのタスクを作成しました。');
+            if (openPreMeeting) setActiveTab('pre');
+          }}
+        />
       </View>
     </SafeAreaView>
   );

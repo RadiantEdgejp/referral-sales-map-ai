@@ -1,288 +1,127 @@
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
-import Info from '../../components/Info';
-import MemoField from '../../components/MemoField';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import MiniButton from '../../components/MiniButton';
-import Route from '../../components/Route';
-import Schedule from '../../components/Schedule';
 import Section from '../../components/Section';
-import { recordReactionEvent } from '../../logic/groundedEvents';
-import { applyNextContact, nextContactDate } from '../../logic/nextContact';
-import { dateValue, formatTime, getDueState } from '../../logic/personPriority';
-import {
-  REACTION_LABELS,
-  REACTION_NEXT_CONTACT_DAYS,
-  type ReactionKind,
-} from '../../logic/reactions';
-import type { TodayAction } from '../../logic/todayActions';
-import { recordInteraction } from '../../storage/interactionLedger';
+import { completeActionTask, postponeActionTask, type PersistedActionTask } from '../../storage/actionTaskStorage';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
 import { homeStyles as styles } from './homeStyles';
 
-const REACTION_OPTIONS: Array<{ kind: ReactionKind; hint: string }> = [
-  { kind: 'positive', hint: '前向き・話が進んだ' },
-  { kind: 'neutral', hint: '普通の反応だった' },
-  { kind: 'no_response', hint: '返事・反応がなかった' },
-  { kind: 'rejected', hint: '断られた・不要と言われた' },
-];
+type CalendarItem = {
+  id: string;
+  personId: string;
+  salesRouteId: string;
+  title: string;
+  startAt: string;
+  endAt: string;
+  purpose: string;
+  status: string;
+};
+
+function priorityLabel(value: string) {
+  if (value === 'high') return '最優先';
+  if (value === 'low') return '通常';
+  return '重要';
+}
+
+function actionLabel(value: string) {
+  if (value === 'pre_meeting') return '予定前ナビ';
+  if (value === 'after_memo') return '後メモ';
+  if (value === 'follow_up') return '連絡';
+  return value || '営業アクション';
+}
 
 export default function HomePane({
   people,
-  actions,
+  tasks,
+  events,
   planUpdated,
   onOpenPerson,
-  onPersonUpdated,
+  onOpenTask,
+  onAddSchedule,
+  onReload,
 }: {
   people: Person[];
-  actions: TodayAction[];
+  tasks: PersistedActionTask[];
+  events: CalendarItem[];
   planUpdated: boolean;
   onOpenPerson: (personId?: string) => void;
-  onPersonUpdated: (person: Person) => void;
+  onOpenTask: (task: PersistedActionTask) => void;
+  onAddSchedule: () => void;
+  onReload: () => Promise<void>;
 }) {
-  const todaySchedule = useMemo(
-    () =>
-      people
-        .filter((person) => getDueState(person) === 'today')
-        .sort((a, b) => dateValue(a.nextContactAt) - dateValue(b.nextContactAt)),
-    [people],
-  );
-  const overduePeople = useMemo(
-    () => people.filter((person) => getDueState(person) === 'overdue'),
-    [people],
-  );
-  const preMeetingPerson = todaySchedule[0];
-
-  // 完了時のリアクション記録シート（行動＋反応を1操作で台帳に蓄積する）
-  const [reactionTarget, setReactionTarget] = useState<TodayAction | null>(null);
-  const [reactionMemo, setReactionMemo] = useState('');
-  const [recordingReaction, setRecordingReaction] = useState(false);
-
-  const openReactionSheet = (item: TodayAction) => {
-    setReactionMemo('');
-    setReactionTarget(item);
-  };
-
-  const completeWithReaction = async (item: TodayAction, reaction: ReactionKind) => {
-    const person = people.find((candidate) => candidate.id === item.personId);
-    if (!person || recordingReaction) {
-      return;
-    }
-
-    setRecordingReaction(true);
-    const reactionLabel = REACTION_LABELS[reaction];
-    const memoText = reactionMemo.trim();
-    const doneLine = `${formatDateTime(new Date().toISOString())} 優先行動「${item.todayTodo}」を完了（反応：${reactionLabel}${memoText ? ` / ${memoText}` : ''}）`;
-
+  const complete = async (task: PersistedActionTask) => {
     try {
-      // 1. 行動＋反応を台帳へ記録し、メモ追記を永続化する
-      const event = await recordReactionEvent({
-        person: {
-          ...person,
-          additionalMemo: [person.additionalMemo, doneLine].filter(Boolean).join('\n'),
-        },
-        action: 'task_completed',
-        reaction,
-        title: `優先行動「${item.todayTodo}」を完了`,
-        summary: memoText || `反応：${reactionLabel}`,
-        sourceType: 'action_task',
-      });
-
-      // 2. リアクション種別に応じた次回連絡日ルール（好反応→短め、反応なし→長め）
-      const days = REACTION_NEXT_CONTACT_DAYS[reaction];
-      const { saved, notice } = await applyNextContact(event.saved, nextContactDate(days));
-
-      // 3. 自動提案の理由も台帳に残す（根拠のない日付にしない）
-      await recordInteraction({
-        person: saved,
-        action: 'auto_next_contact',
-        title: '次回連絡日を自動設定',
-        summary: `反応「${reactionLabel}」だったため、規則（${days}日後 9:00）を適用しました。`,
-        sourceType: 'interaction_rule',
-        sourceId: event.ledgerRowId,
-      });
-
-      onPersonUpdated(saved);
-      setReactionTarget(null);
-      Alert.alert(
-        `反応「${reactionLabel}」を記録しました`,
-        [notice, '会話の内容は後メモから入力すると人脈カードに反映されます。'].join('\n'),
-      );
+      await completeActionTask(task.id);
+      await onReload();
+      Alert.alert('完了しました', '今日やることを完了にしました。');
     } catch (error) {
-      // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
-      Alert.alert('記録に失敗しました', error instanceof Error ? error.message : '反応の記録中にエラーが発生しました。');
-    } finally {
-      setRecordingReaction(false);
+      Alert.alert('完了に失敗しました', error instanceof Error ? error.message : 'もう一度お試しください。');
     }
   };
 
-  const postponeAction = async (item: TodayAction) => {
-    const person = people.find((candidate) => candidate.id === item.personId);
-    if (!person) {
-      return;
-    }
-
+  const postpone = async (task: PersistedActionTask) => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
     try {
-      await recordInteraction({
-        person,
-        action: 'postponed',
-        title: `優先行動「${item.todayTodo}」を明日に延期`,
-        summary: '次回連絡日を明日 9:00 に再設定しました。',
-        sourceType: 'action_task',
-      });
-      const { saved, notice } = await applyNextContact(person, nextContactDate(1));
-      onPersonUpdated(saved);
-      Alert.alert('明日に延期しました', notice);
+      await postponeActionTask(task.id, tomorrow);
+      await onReload();
+      Alert.alert('明日に延期しました', '期限を明日9:00へ変更しました。');
     } catch (error) {
-      Alert.alert('延期の記録に失敗しました', error instanceof Error ? error.message : '延期の記録中にエラーが発生しました。');
+      Alert.alert('延期に失敗しました', error instanceof Error ? error.message : 'もう一度お試しください。');
     }
   };
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <Section title="今日の営業テーマ">
-        <Info label="テーマ" value="次回連絡日が近い人を放置せず、今日の接触を完了する" compact />
-        <Info label="今日の狙い" value="売り込みではなく、課題確認と関係構築を優先する" compact />
-        <Info label="今日の注意" value="紹介依頼を急がない。まず情報交換を挟む" compact />
-        {planUpdated ? <Text style={styles.updatedNotice}>再生成された今日の営業地図です</Text> : null}
+        <Text style={styles.shortReason}>期限が来ている行動を上から処理し、会話後の情報を人脈カードへ残す。</Text>
+        {planUpdated ? <Text style={styles.updatedNotice}>最新のタスクと予定を読み込みました</Text> : null}
       </Section>
 
-      <Section title="今日の優先行動" subtitle="誰に・なぜ・何をするかだけ確認します。">
-        {actions.length > 0 ? (
-          actions.map((item) => (
-            <Pressable key={item.id} style={styles.priorityRow} onPress={() => onOpenPerson(item.personId)}>
+      <Pressable style={styles.fullPrimaryButton} onPress={onAddSchedule}>
+        <Text style={styles.fullPrimaryText}>今日の予定を追加</Text>
+      </Pressable>
+
+      <Section title="今日やること" subtitle="保存済みの営業タスクを期限順に表示しています。">
+        {tasks.length === 0 ? <Text style={styles.emptyText}>今日までに対応するタスクはありません。</Text> : tasks.map((task) => {
+          const person = people.find((candidate) => candidate.id === task.personId);
+          return (
+            <Pressable key={task.id} style={styles.priorityRow} onPress={() => onOpenTask(task)}>
               <View style={styles.priorityHeader}>
-                <Text style={styles.priorityBadge}>{item.priority}</Text>
-                <Text style={styles.rowName}>{item.personName}</Text>
-                <Text style={styles.actionType}>{item.actionType}</Text>
+                <Text style={styles.priorityBadge}>{priorityLabel(task.priority)}</Text>
+                <Text style={styles.rowName}>{person?.name ?? '人物情報なし'}</Text>
+                <Text style={styles.actionType}>{actionLabel(task.actionType)}</Text>
               </View>
-              <Text style={styles.shortReason}>{item.shortReason}</Text>
-              <Text style={styles.todoLine}>今日やること：{item.todayTodo}</Text>
+              <Text style={styles.shortReason}>{task.reason || task.todayGoal}</Text>
+              <Text style={styles.todoLine}>次の一手：{task.nextStep || task.title}</Text>
+              <Text style={styles.rowMeta}>期限：{formatDateTime(task.dueDate)}</Text>
               <View style={styles.rowButtons}>
-                <MiniButton label="詳細" onPress={() => onOpenPerson(item.personId)} />
-                <MiniButton label="完了" onPress={() => openReactionSheet(item)} />
-                <MiniButton label="延期" onPress={() => postponeAction(item)} />
+                <MiniButton label="開く" onPress={() => onOpenTask(task)} />
+                <MiniButton label="完了" onPress={() => complete(task)} />
+                <MiniButton label="延期" onPress={() => postpone(task)} />
+                <MiniButton label="人物" onPress={() => onOpenPerson(task.personId)} />
               </View>
             </Pressable>
-          ))
-        ) : (
-          <Text style={styles.emptyText}>まだ人脈カードがありません。人脈タブから最初の1人を追加すると、ここに優先行動が表示されます。</Text>
-        )}
+          );
+        })}
       </Section>
 
-      <Section title="今日の予定と通知">
-        {todaySchedule.length > 0 ? (
-          todaySchedule.map((person) => (
-            <Schedule
-              key={person.id}
-              time={formatTime(person.nextContactAt)}
-              title={`${person.name}に連絡`}
-              purpose={person.nextAction || person.goal}
-            />
-          ))
-        ) : (
-          <Text style={styles.emptyText}>今日が次回連絡日の人はいません。</Text>
-        )}
+      <Section title="予定" subtitle="Supabaseに保存されている予定です。">
+        {events.length === 0 ? <Text style={styles.emptyText}>予定はまだありません。</Text> : events.slice(0, 10).map((event) => {
+          const person = people.find((candidate) => candidate.id === event.personId);
+          return (
+            <Pressable key={event.id} style={styles.priorityRow} onPress={() => {
+              const task = tasks.find((candidate) => candidate.calendarEventId === event.id && candidate.actionType === 'pre_meeting');
+              if (task) onOpenTask(task); else onOpenPerson(event.personId);
+            }}>
+              <Text style={styles.rowName}>{event.title}</Text>
+              <Text style={styles.rowMeta}>{person?.name ?? '人物情報なし'} / {formatDateTime(event.startAt)}</Text>
+              <Text style={styles.shortReason}>{event.purpose}</Text>
+            </Pressable>
+          );
+        })}
       </Section>
-
-      <Section title="今日進める営業ルート">
-        {actions.length > 0 ? (
-          actions.map((item) => {
-            const person = people.find((candidate) => candidate.id === item.personId);
-            return (
-              <Route
-                key={item.id}
-                title={`${item.personName} → ${item.todayTodo}`}
-                meta={`${person?.categories.join('・') ?? '分類未設定'} / ${item.actionType}`}
-              />
-            );
-          })
-        ) : (
-          <Text style={styles.emptyText}>進行中の営業ルートはまだありません。</Text>
-        )}
-      </Section>
-
-      <Section title="会う前チェック">
-        {preMeetingPerson ? (
-          <>
-            <Info label={preMeetingPerson.name} value={`${formatTime(preMeetingPerson.nextContactAt)} 連絡・接触予定`} />
-            <Info label="目的" value={preMeetingPerson.goal} />
-            <Info label="最初の質問" value={preMeetingPerson.nextQuestion} />
-            <Info label="注意" value={preMeetingPerson.cautions} />
-          </>
-        ) : (
-          <Text style={styles.emptyText}>今日会う予定の人はいません。予定前ナビは相手を選ぶと使えます。</Text>
-        )}
-      </Section>
-
-      <Section title="会った後に処理するもの">
-        {overduePeople.length > 0 ? (
-          overduePeople.map((person) => (
-            <Route
-              key={person.id}
-              title={person.name}
-              meta={`次回連絡日（${formatDateTime(person.nextContactAt)}）超過。対応したら後メモを入力して次回連絡日を更新`}
-            />
-          ))
-        ) : (
-          <Text style={styles.emptyText}>未処理の連絡漏れはありません。</Text>
-        )}
-      </Section>
-
-      <Section title="今日の営業コーチ指摘">
-        <Info label="今週の傾向" value="初回接触はできていますが、会話後に次アクションを決める数が少ないです。" />
-        <Info label="今日の改善" value="会話した人は必ず「分類・ゴール・次回連絡日」を決めて終える。" />
-      </Section>
-
-      <Modal
-        visible={reactionTarget !== null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setReactionTarget(null)}
-      >
-        <View style={styles.sheetBackdrop}>
-          <View style={styles.personPickerSheet}>
-            <View style={styles.sheetHeader}>
-              <View>
-                <Text style={styles.sheetTitle}>相手の反応はどうでしたか？</Text>
-                <Text style={styles.sheetSubcopy}>
-                  {reactionTarget
-                    ? `${reactionTarget.personName}：${reactionTarget.todayTodo}`
-                    : ''}
-                </Text>
-              </View>
-              <Pressable style={styles.sheetCloseButton} onPress={() => setReactionTarget(null)}>
-                <Text style={styles.sheetCloseText}>閉じる</Text>
-              </Pressable>
-            </View>
-
-            <MemoField
-              label="一言メモ（任意）"
-              value={reactionMemo}
-              onChangeText={setReactionMemo}
-              placeholder="例：資料を見たいと言われた / 既読のまま返信なし"
-            />
-
-            {recordingReaction ? (
-              <View style={styles.loadingBox}>
-                <ActivityIndicator color="#153E75" size="small" />
-                <Text style={styles.loadingText}>反応を記録しています...</Text>
-              </View>
-            ) : (
-              REACTION_OPTIONS.map((option) => (
-                <Pressable
-                  key={option.kind}
-                  style={styles.personSelectCard}
-                  onPress={() => reactionTarget && completeWithReaction(reactionTarget, option.kind)}
-                >
-                  <Text style={styles.personSelectName}>{REACTION_LABELS[option.kind]}</Text>
-                  <Text style={styles.personSelectMeta}>{option.hint}</Text>
-                </Pressable>
-              ))
-            )}
-          </View>
-        </View>
-      </Modal>
     </ScrollView>
   );
 }
