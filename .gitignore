@@ -27,6 +27,10 @@ yarn-debug.*
 yarn-error.*
 expo-server.log
 expo-web.log
+expo-*.out.log
+expo-*.err.log
+mobile-beta-*.log
+.tmp/
 
 # macOS
 .DS_Store
@@ -34,6 +38,8 @@ expo-web.log
 
 # local env files
 .env*.local
+.beta-tester.local.json
+.mobile-beta-tunnel.local.json
 
 # typescript
 *.tsbuildinfo

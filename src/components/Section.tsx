@@ -16,6 +16,7 @@ const styles = StyleSheet.create({
     borderColor: '#E2E8F0',
     borderRadius: 8,
     borderWidth: 1,
+    boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)',
     marginBottom: 12,
     padding: 14,
   },

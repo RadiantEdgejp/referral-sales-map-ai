@@ -1,18 +1,35 @@
 import { useEffect, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Archive, Bell, CalendarClock } from 'lucide-react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Archive, Bell, CalendarClock, ChevronRight, Share2 } from 'lucide-react-native';
 import AttachmentTextInput from '../components/AttachmentTextInput';
+import ContactPickerModal from '../components/ContactPickerModal';
 import SectionCard from '../components/SectionCard';
+import { REACTION_LABELS } from '../logic/reactions';
 import { cancelContactNotification, scheduleContactNotification } from '../notifications/notificationService';
-import { getPeople, updatePerson } from '../storage/personStorage';
+import { getInteractionTimeline, type TimelineEntry } from '../storage/interactionLedger';
+import {
+  getPersonHistorySummary,
+  type PersonHistorySummary,
+} from '../storage/personHistorySummary';
+import { getPeople, getPersonById, updatePerson } from '../storage/personStorage';
 import type { ScreenProps } from '../types/navigation';
 import type { Person } from '../types/person';
 import { formatDateTime } from '../utils/date';
 
 export default function PersonDetailScreen({ navigation, route }: ScreenProps<'PersonDetail'>) {
   const [person, setPerson] = useState<Person | null>(null);
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'not-found' | 'error'>('loading');
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
   const [additionalMemo, setAdditionalMemo] = useState('');
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [companyDraft, setCompanyDraft] = useState('');
+  const [roleDraft, setRoleDraft] = useState('');
+  const [allPeople, setAllPeople] = useState<Person[]>([]);
+  const [introducerPickerOpen, setIntroducerPickerOpen] = useState(false);
+  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [historySummary, setHistorySummary] = useState<PersonHistorySummary | null>(null);
+  const [historyError, setHistoryError] = useState('');
 
   const archivePerson = async () => {
     if (!person) {
@@ -31,12 +48,111 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
   };
 
   useEffect(() => {
-    getPeople().then((people) => {
-      const found = people.find((item) => item.id === route.params.personId) ?? null;
-      setPerson(found);
-      setAdditionalMemo(found?.additionalMemo ?? '');
-    });
-  }, [route.params.personId]);
+    let active = true;
+    setLoadState('loading');
+    setLoadError('');
+    setPerson(null);
+    setHistorySummary(null);
+    setHistoryError('');
+
+    Promise.all([getPersonById(route.params.personId), getPeople()])
+      .then(([found, people]) => {
+        if (!active) {
+          return;
+        }
+
+        setAllPeople(people.filter((item) => !item.archivedAt));
+        if (!found || found.archivedAt) {
+          setLoadState('not-found');
+          return;
+        }
+
+        setPerson(found);
+        setAdditionalMemo(found.additionalMemo ?? '');
+        setCompanyDraft(found.company ?? '');
+        setRoleDraft(found.role ?? '');
+        setLoadState('ready');
+      })
+      .catch((error: unknown) => {
+        if (!active) {
+          return;
+        }
+        setLoadError(error instanceof Error ? error.message : '人物データの取得中にエラーが発生しました。');
+        setLoadState('error');
+      });
+
+    // 行動→反応タイムラインは補助情報なので、取得失敗で人物詳細全体を止めない。
+    getInteractionTimeline(route.params.personId)
+      .then((entries) => {
+        if (active) {
+          setTimeline(entries);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setTimeline([]);
+        }
+      });
+
+    getPersonHistorySummary(route.params.personId)
+      .then((summary) => {
+        if (active) {
+          setHistorySummary(summary);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setHistoryError(error instanceof Error ? error.message : '営業履歴の集計に失敗しました。');
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [reloadKey, route.params.personId]);
+
+  // 紹介チェーン（contacts.introduced_by）：紹介元と、この人から紹介された人
+  const introducer = person?.introducedById
+    ? allPeople.find((item) => item.id === person.introducedById) ?? null
+    : null;
+  const referredPeople = person
+    ? allPeople.filter((item) => item.introducedById === person.id && !item.archivedAt)
+    : [];
+
+  const saveIntroducer = async (introducedBy: Person | null) => {
+    setIntroducerPickerOpen(false);
+    if (!person) {
+      return;
+    }
+    try {
+      const saved = await updatePerson({ ...person, introducedById: introducedBy?.id });
+      setPerson(saved);
+      Alert.alert(
+        '紹介元を更新しました',
+        introducedBy ? `${introducedBy.name}からの紹介として記録しました。` : '紹介元の設定を解除しました。',
+      );
+    } catch (error) {
+      Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '紹介元の保存中にエラーが発生しました。');
+    }
+  };
+
+  const saveCompanyRole = async () => {
+    if (!person) {
+      return;
+    }
+    const updated = {
+      ...person,
+      company: companyDraft.trim() || undefined,
+      role: roleDraft.trim() || undefined,
+    };
+    try {
+      const saved = await updatePerson(updated);
+      setPerson(saved);
+      Alert.alert('会社・役職を保存しました');
+    } catch (error) {
+      Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '会社・役職の保存中にエラーが発生しました。');
+    }
+  };
 
   const createReminderDate = (type: 'tomorrow' | 'threeDays' | 'week' | 'none') => {
     if (type === 'none') {
@@ -72,26 +188,61 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
       return;
     }
 
+    // 端末へのプッシュ通知はあくまで付随機能。スケジューリングに失敗しても
+    // （Web版は非対応、権限未許可など）、次回連絡日そのものは必ず保存する。
+    let notificationId = person.notificationId;
+    let notice = formatDateTime(selectedDate.toISOString());
     try {
-      const notificationId = await scheduleContactNotification(person, selectedDate);
-      const updated = {
-        ...person,
-        nextContactAt: selectedDate.toISOString(),
-        notificationId,
-        additionalMemo,
-      };
-      await updatePerson(updated);
-      setPerson(updated);
-      Alert.alert('通知を設定しました', formatDateTime(selectedDate.toISOString()));
+      notificationId = await scheduleContactNotification(person, selectedDate);
     } catch (error) {
-      Alert.alert('通知を設定できませんでした', error instanceof Error ? error.message : '通知設定を確認してください。');
+      notificationId = undefined;
+      notice = `${formatDateTime(selectedDate.toISOString())}（${
+        error instanceof Error ? error.message : '通知は設定できませんでした。'
+      }）`;
     }
+
+    const updated = {
+      ...person,
+      nextContactAt: selectedDate.toISOString(),
+      notificationId,
+      additionalMemo,
+    };
+    await updatePerson(updated);
+    setPerson(updated);
+    Alert.alert('次回連絡日を設定しました', notice);
   };
 
-  if (!person) {
+  if (loadState === 'loading') {
     return (
       <View style={styles.center}>
         <Text style={styles.muted}>人物データを読み込んでいます。</Text>
+      </View>
+    );
+  }
+
+  if (loadState === 'error') {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.stateTitle}>人物データを読み込めませんでした</Text>
+        <Text style={styles.muted}>{loadError}</Text>
+        <Pressable style={styles.primaryButton} onPress={() => setReloadKey((current) => current + 1)}>
+          <Text style={styles.primaryButtonText}>再試行</Text>
+        </Pressable>
+        <Pressable style={styles.stateBackButton} onPress={() => navigation.goBack()}>
+          <Text style={styles.stateBackButtonText}>前の画面に戻る</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (loadState === 'not-found' || !person) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.stateTitle}>人物が見つかりません</Text>
+        <Text style={styles.muted}>削除またはアーカイブされた可能性があります。</Text>
+        <Pressable style={styles.stateBackButton} onPress={() => navigation.goBack()}>
+          <Text style={styles.stateBackButtonText}>人脈一覧に戻る</Text>
+        </Pressable>
       </View>
     );
   }
@@ -100,6 +251,9 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
     <ScrollView style={styles.flex} contentContainerStyle={styles.container}>
       <View style={styles.hero}>
         <Text style={styles.name}>{person.name}</Text>
+        {person.company || person.role ? (
+          <Text style={styles.companyLine}>{[person.company, person.role].filter(Boolean).join('・')}</Text>
+        ) : null}
         <Text style={styles.industry}>{person.industry}</Text>
         <View style={styles.tags}>
           {person.categories.map((category) => (
@@ -110,13 +264,131 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
         </View>
       </View>
 
+      <SectionCard title="この人の現在地">
+        <Text style={styles.currentStepLabel}>次の一手</Text>
+        <Text style={styles.currentStepValue}>
+          {historySummary?.latestNextStep || person.nextAction || '次の一手がまだ設定されていません。'}
+        </Text>
+        {historySummary ? (
+          <View style={styles.historySummaryGrid}>
+            <HistoryMetric label="後メモ" value={historySummary.afterMemoCount} />
+            <HistoryMetric label="文面確認" value={historySummary.messageCheckCount} />
+            <HistoryMetric label="更新履歴" value={historySummary.updateHistoryCount} />
+            <HistoryMetric label="操作履歴" value={historySummary.interactionCount} />
+            <HistoryMetric label="営業ルート" value={historySummary.salesRouteCount} />
+            <HistoryMetric label="未確認" value={historySummary.unresolvedGapCount} warning />
+          </View>
+        ) : historyError ? (
+          <View style={styles.historyErrorBox}>
+            <Text style={styles.historyErrorText}>{historyError}</Text>
+            <Pressable style={styles.historyRetryButton} onPress={() => setReloadKey((current) => current + 1)}>
+              <Text style={styles.historyRetryText}>履歴を再読込</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Text style={styles.muted}>営業履歴を集計しています。</Text>
+        )}
+        {historySummary?.latestActivityAt ? (
+          <Text style={styles.latestActivity}>最終営業データ：{formatDateTime(historySummary.latestActivityAt)}</Text>
+        ) : null}
+      </SectionCard>
+
+      <SectionCard title="会社・役職">
+        <Text style={styles.fieldLabel}>会社名</Text>
+        <TextInput
+          value={companyDraft}
+          onChangeText={setCompanyDraft}
+          placeholder="例：〇〇美容室"
+          placeholderTextColor="#94A3B8"
+          style={styles.textField}
+        />
+        <Text style={[styles.fieldLabel, styles.fieldLabelSpaced]}>役職</Text>
+        <TextInput
+          value={roleDraft}
+          onChangeText={setRoleDraft}
+          placeholder="例：代表"
+          placeholderTextColor="#94A3B8"
+          style={styles.textField}
+        />
+        <Pressable style={styles.primaryButton} onPress={saveCompanyRole}>
+          <Text style={styles.primaryButtonText}>会社・役職を保存</Text>
+        </Pressable>
+      </SectionCard>
+
+      <SectionCard title="紹介チェーン">
+        <View style={styles.chainHeader}>
+          <Share2 color="#153E75" size={16} />
+          <Text style={styles.chainHint}>誰の紹介でつながり、誰へ広がったかを記録します。</Text>
+        </View>
+
+        <Text style={styles.fieldLabel}>紹介元（この人を紹介してくれた人）</Text>
+        {introducer ? (
+          <Pressable
+            style={styles.chainCard}
+            onPress={() => navigation.push('PersonDetail', { personId: introducer.id })}
+          >
+            <View style={styles.chainCardBody}>
+              <Text style={styles.chainName}>{introducer.name}</Text>
+              <Text style={styles.chainMeta}>
+                {[introducer.company, introducer.role].filter(Boolean).join('・') || introducer.industry}
+              </Text>
+            </View>
+            <ChevronRight color="#94A3B8" size={18} />
+          </Pressable>
+        ) : (
+          <Text style={styles.chainEmpty}>
+            {person.introducedById ? '紹介元の人物が見つかりません（アーカイブ済みの可能性）。' : 'まだ設定されていません。'}
+          </Text>
+        )}
+        <Pressable style={styles.chainSetButton} onPress={() => setIntroducerPickerOpen(true)}>
+          <Text style={styles.chainSetButtonText}>{introducer ? '紹介元を変更する' : '紹介元を設定する'}</Text>
+        </Pressable>
+
+        <Text style={[styles.fieldLabel, styles.fieldLabelSpaced]}>この人から紹介された人（{referredPeople.length}人）</Text>
+        {referredPeople.length > 0 ? (
+          referredPeople.map((referred) => (
+            <Pressable
+              key={referred.id}
+              style={styles.chainCard}
+              onPress={() => navigation.push('PersonDetail', { personId: referred.id })}
+            >
+              <View style={styles.chainCardBody}>
+                <Text style={styles.chainName}>{referred.name}</Text>
+                <Text style={styles.chainMeta}>
+                  {[referred.company, referred.role].filter(Boolean).join('・') || referred.industry}
+                </Text>
+              </View>
+              <ChevronRight color="#94A3B8" size={18} />
+            </Pressable>
+          ))
+        ) : (
+          <Text style={styles.chainEmpty}>まだいません。新しく追加した人の「紹介元」にこの人を設定すると、ここに表示されます。</Text>
+        )}
+      </SectionCard>
+
       <Info title="関係性" body={person.relationship} />
-      <SectionCard title="可能性スコア">
-        <Score label="顧客可能性" value={person.customerPotential} />
-        <Score label="紹介元可能性" value={person.referrerPotential} />
-        <Score label="紹介先可能性" value={person.referralTargetPotential} />
-        <Score label="情報源価値" value={person.informationValue} />
-        <Score label="将来候補度" value={person.futurePotential} />
+
+      <SectionCard title="行動と反応のタイムライン">
+        {timeline.length > 0 ? (
+          timeline.map((entry) => (
+            <View key={entry.rowId} style={styles.timelineRow}>
+              <Text style={styles.timelineDate}>{formatDateTime(entry.happenedAt)}</Text>
+              <View style={styles.timelineTitleRow}>
+                <Text style={styles.timelineTitle}>{entry.title}</Text>
+                {entry.reaction ? (
+                  <Text style={[styles.reactionChip, reactionChipStyle(entry.reaction)]}>
+                    {REACTION_LABELS[entry.reaction]}
+                  </Text>
+                ) : null}
+              </View>
+              {entry.summary ? <Text style={styles.timelineSummary}>{entry.summary}</Text> : null}
+            </View>
+          ))
+        ) : (
+          <Text style={styles.paragraph}>
+            まだ行動記録がありません。ホームの優先行動を完了したり、後メモ・文面確認を保存すると、ここに行動→反応の履歴が蓄積されます。
+          </Text>
+        )}
       </SectionCard>
       <Info title="初回切り口" body={person.openingTalk} />
       <Info title="次に聞く質問" body={person.nextQuestion} />
@@ -182,6 +454,19 @@ export default function PersonDetailScreen({ navigation, route }: ScreenProps<'P
         </Pressable>
       </SectionCard>
 
+      <ContactPickerModal
+        visible={introducerPickerOpen}
+        people={allPeople}
+        selectedPersonId={person.introducedById}
+        excludePersonId={person.id}
+        allowNone
+        noneLabel="紹介元なし（設定を解除する）"
+        title="紹介元を選ぶ"
+        subtitle={`${person.name}を紹介してくれた人を選びます。`}
+        onClose={() => setIntroducerPickerOpen(false)}
+        onSelect={saveIntroducer}
+      />
+
       <Modal
         visible={archiveConfirmOpen}
         transparent
@@ -217,16 +502,17 @@ function Info({ title, body }: { title: string; body: string }) {
   );
 }
 
-function Score({ label, value }: { label: string; value: number }) {
-  return (
-    <View style={styles.scoreRow}>
-      <Text style={styles.scoreLabel}>{label}</Text>
-      <View style={styles.scoreTrack}>
-        <View style={[styles.scoreBar, { width: `${value}%` }]} />
-      </View>
-      <Text style={styles.scoreValue}>{value}</Text>
-    </View>
-  );
+function reactionChipStyle(reaction: 'positive' | 'neutral' | 'no_response' | 'rejected') {
+  switch (reaction) {
+    case 'positive':
+      return styles.reactionPositive;
+    case 'rejected':
+      return styles.reactionRejected;
+    case 'no_response':
+      return styles.reactionNoResponse;
+    default:
+      return styles.reactionNeutral;
+  }
 }
 
 function ReminderButton({
@@ -246,6 +532,15 @@ function ReminderButton({
   );
 }
 
+function HistoryMetric({ label, value, warning }: { label: string; value: number; warning?: boolean }) {
+  return (
+    <View style={[styles.historyMetric, warning && value > 0 && styles.historyMetricWarning]}>
+      <Text style={styles.historyMetricValue}>{value}</Text>
+      <Text style={styles.historyMetricLabel}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
@@ -260,9 +555,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F8FAFC',
+    padding: 24,
+  },
+  stateTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '900',
+    marginBottom: 8,
+    textAlign: 'center',
   },
   muted: {
     color: '#64748B',
+    textAlign: 'center',
+  },
+  stateBackButton: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+    paddingHorizontal: 18,
+  },
+  stateBackButtonText: {
+    color: '#153E75',
+    fontWeight: '800',
   },
   hero: {
     backgroundColor: '#153E75',
@@ -275,10 +590,160 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '900',
   },
+  companyLine: {
+    color: '#BFDBFE',
+    fontSize: 14,
+    fontWeight: '800',
+    marginTop: 6,
+  },
+  currentStepLabel: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  currentStepValue: {
+    color: '#0F172A',
+    fontSize: 17,
+    fontWeight: '900',
+    lineHeight: 24,
+    marginTop: 4,
+  },
+  historySummaryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 14,
+  },
+  historyMetric: {
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    minWidth: 92,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  historyMetricWarning: {
+    backgroundColor: '#FEF3C7',
+  },
+  historyMetricValue: {
+    color: '#0F172A',
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  historyMetricLabel: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  latestActivity: {
+    color: '#64748B',
+    fontSize: 12,
+    marginTop: 10,
+  },
+  historyErrorBox: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 8,
+    marginTop: 12,
+    padding: 10,
+  },
+  historyErrorText: {
+    color: '#991B1B',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  historyRetryButton: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingVertical: 4,
+  },
+  historyRetryText: {
+    color: '#153E75',
+    fontSize: 12,
+    fontWeight: '900',
+  },
   industry: {
     color: '#DBEAFE',
     fontWeight: '700',
     marginTop: 4,
+  },
+  fieldLabel: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  fieldLabelSpaced: {
+    marginTop: 12,
+  },
+  textField: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#D7DEE8',
+    borderRadius: 8,
+    borderWidth: 1,
+    color: '#0F172A',
+    fontSize: 15,
+    minHeight: 46,
+    paddingHorizontal: 12,
+  },
+  chainHeader: {
+    alignItems: 'center',
+    backgroundColor: '#EAF2FF',
+    borderRadius: 8,
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+    padding: 10,
+  },
+  chainHint: {
+    color: '#153E75',
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '800',
+    lineHeight: 17,
+  },
+  chainCard: {
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+    padding: 12,
+  },
+  chainCardBody: { flex: 1 },
+  chainName: {
+    color: '#0F172A',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  chainMeta: {
+    color: '#64748B',
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  chainEmpty: {
+    color: '#94A3B8',
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 8,
+  },
+  chainSetButton: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 42,
+  },
+  chainSetButtonText: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '900',
   },
   tags: {
     flexDirection: 'row',
@@ -437,34 +902,46 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '900',
   },
-  scoreRow: {
+  timelineRow: {
+    borderLeftColor: '#CBD5E1',
+    borderLeftWidth: 2,
+    marginBottom: 12,
+    paddingLeft: 10,
+  },
+  timelineDate: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  timelineTitleRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 10,
-    marginBottom: 12,
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 2,
   },
-  scoreLabel: {
-    color: '#334155',
-    fontSize: 13,
-    fontWeight: '900',
-    width: 92,
-  },
-  scoreTrack: {
-    flex: 1,
-    height: 9,
-    backgroundColor: '#E2E8F0',
-    borderRadius: 999,
-    overflow: 'hidden',
-  },
-  scoreBar: {
-    height: '100%',
-    backgroundColor: '#0F766E',
-  },
-  scoreValue: {
+  timelineTitle: {
     color: '#0F172A',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '900',
-    width: 26,
-    textAlign: 'right',
+    flexShrink: 1,
   },
+  timelineSummary: {
+    color: '#475569',
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 3,
+  },
+  reactionChip: {
+    borderRadius: 10,
+    fontSize: 11,
+    fontWeight: '900',
+    overflow: 'hidden',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  reactionPositive: { backgroundColor: '#DCFCE7', color: '#166534' },
+  reactionNeutral: { backgroundColor: '#E2E8F0', color: '#334155' },
+  reactionNoResponse: { backgroundColor: '#FEF3C7', color: '#92400E' },
+  reactionRejected: { backgroundColor: '#FEE2E2', color: '#B91C1C' },
 });

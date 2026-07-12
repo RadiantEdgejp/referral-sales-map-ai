@@ -299,6 +299,7 @@ export const homeStyles = StyleSheet.create({
   },
   questionPreviewTitle: { color: '#0F172A', fontWeight: '900', marginBottom: 6 },
   questionPreviewText: { color: '#153E75', fontWeight: '900', lineHeight: 21, marginTop: 4 },
+  questionReasonText: { color: '#64748B', fontSize: 11, fontWeight: '700', lineHeight: 16, marginLeft: 14, marginTop: 1 },
   fullPrimaryButton: {
     alignItems: 'center',
     backgroundColor: '#153E75',
@@ -458,6 +459,8 @@ export const homeStyles = StyleSheet.create({
     marginBottom: 10,
     padding: 12,
   },
+  fieldLabel: { color: '#334155', fontSize: 12, fontWeight: '900', marginBottom: 6, marginTop: 14 },
+  compactTextInput: { backgroundColor: '#FFFFFF', borderColor: '#CBD5E1', borderRadius: 8, borderWidth: 1, color: '#0F172A', fontSize: 14, minHeight: 46, paddingHorizontal: 12 },
   bottomNav: {
     alignItems: 'center',
     backgroundColor: '#FFFFFF',

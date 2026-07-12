@@ -2,24 +2,28 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
+import { buildContactAIContext } from '../../ai/aiContext';
 import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
+import { generateForReview, persistReviewedResult } from '../../ai/reviewWorkflow';
+import { assertMessageCheckSafe } from '../../ai/safety';
 import type { LineCheckAnalysis } from '../../ai/types';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
-import FilterChip from '../../components/FilterChip';
+import ContactPickerModal from '../../components/ContactPickerModal';
 import Section from '../../components/Section';
 import {
-  LINE_CHECK_TYPES,
   LINE_NOTICE_OPTIONS,
   LINE_PERSON_FILTERS,
-  getLineCheckTypeGuide,
-  getLinePersonStatus,
   matchesLinePersonFilter,
-  type LineCheckType,
   type LinePersonFilter,
 } from '../../logic/lineCheck';
+import { detectMessageType } from '../../logic/messageTypeDetection';
+import { deriveGapSignals, GAP_DEFINITIONS } from '../../logic/dataGaps';
+import { recordReactionEvent } from '../../logic/groundedEvents';
 import { dedupePeople } from '../../logic/personPriority';
+import { REACTION_LABELS, reactionFromTemperatureLabel } from '../../logic/reactions';
 import { cancelContactNotification, scheduleContactNotification } from '../../notifications/notificationService';
-import { saveMessageCheck } from '../../storage/flowLogStorage';
+import { addOpenGaps, resolveGaps } from '../../storage/dataGapStorage';
+import { markMessageCheckSaved, saveMessageCheck } from '../../storage/flowLogStorage';
 import { updatePerson } from '../../storage/personStorage';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
@@ -42,46 +46,37 @@ export default function LineCheckPane({
 }) {
   const [selectedPersonId, setSelectedPersonId] = useState(personId);
   const [personPickerOpen, setPersonPickerOpen] = useState(false);
-  const [personQuery, setPersonQuery] = useState('');
-  const [personFilter, setPersonFilter] = useState<LinePersonFilter>('最近やり取り');
-  const [checkType, setCheckType] = useState<LineCheckType>('受信文チェック');
   const [messageText, setMessageText] = useState('');
+  const [intention, setIntention] = useState('');
   const [analysis, setAnalysis] = useState<LineCheckAnalysis | null>(null);
   const [checking, setChecking] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [copyNotice, setCopyNotice] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
+  const [saveWarning, setSaveWarning] = useState('');
   const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationSaving, setNotificationSaving] = useState(false);
 
-  const candidates = useMemo(() => dedupePeople(people), [people]);
+  const candidates = useMemo(() => dedupePeople(people.filter((person) => !person.archivedAt)), [people]);
   const currentPersonId = selectedPersonId ?? personId ?? candidates[0]?.id;
   const selectedPerson = useMemo(
     () => candidates.find((person) => person.id === currentPersonId) ?? candidates[0],
     [candidates, currentPersonId],
   );
-  const filteredCandidates = useMemo(() => {
-    const normalized = personQuery.trim().toLowerCase();
-
-    return candidates.filter((person) => {
-      const matchesQuery =
-        !normalized ||
-        [person.name, person.industry, person.relationship, person.rawMemo, person.nextAction, person.cautions]
-          .join(' ')
-          .toLowerCase()
-          .includes(normalized);
-      const matchesFilter = matchesLinePersonFilter(person, personFilter);
-
-      return matchesQuery && matchesFilter;
-    });
-  }, [candidates, personFilter, personQuery]);
-
-  const typeGuide = getLineCheckTypeGuide(checkType);
+  const detectedType = useMemo(() => detectMessageType(messageText, intention), [messageText, intention]);
+  const checkType = detectedType.checkType;
+  const analysisInputText = useMemo(
+    () => [messageText, intention.trim() ? `ユーザーの目的：${intention.trim()}` : ''].filter(Boolean).join('\n'),
+    [messageText, intention],
+  );
 
   const resetResult = () => {
     setAnalysis(null);
     setErrorMessage('');
     setCopyNotice('');
     setSavedNotice(false);
+    setSaveWarning('');
   };
 
   const checkMessage = async () => {
@@ -98,11 +93,18 @@ export default function LineCheckPane({
     setChecking(true);
     resetResult();
     try {
-      const result = await getLlmAdapter().analyzeMessageCheck({
+      // 生成直前にSupabaseから蓄積データを集約して注入する（CLAUDE.md 6章）
+      const context = await buildContactAIContext(selectedPerson);
+      const input = {
         person: selectedPerson,
         checkType,
-        text: messageText,
-      });
+        text: analysisInputText,
+        context,
+      };
+      const result = await generateForReview(
+        () => getLlmAdapter().analyzeMessageCheck(input),
+        (generated) => assertMessageCheckSafe(input, generated),
+      );
       setAnalysis(result);
     } catch (error) {
       // AI失敗時は分析結果を持たない＝人脈カードへの保存操作ができない状態を維持する
@@ -120,10 +122,11 @@ export default function LineCheckPane({
   };
 
   const saveToPersonCard = async () => {
+    if (saving || savedNotice) return;
     if (!selectedPerson || !analysis) return;
 
     const memo = [
-      `文面確認（${checkType}）`,
+      `文面確認（AI判定：${detectedType.label}）`,
       `入力文：${messageText || '未入力'}`,
       `温度感：${analysis.temperature.label} / ${analysis.temperature.reason}`,
       `抽出情報：${analysis.extracted.map((item) => `${item.label}：${item.value}`).join('、')}`,
@@ -134,14 +137,19 @@ export default function LineCheckPane({
       `注意点：${analysis.caution}`,
     ].join('\n');
 
+    let draftRowId: string | undefined;
     try {
+      setSaving(true);
+      const input = { person: selectedPerson, checkType, text: analysisInputText };
+      await persistReviewedResult(analysis, (reviewed) => assertMessageCheckSafe(input, reviewed), async () => {
       // 分析結果を message_checks に永続化してから、人脈カードへ反映する（Issue #17）
-      await saveMessageCheck({
+      const messageCheckRowId = await saveMessageCheck({
         person: selectedPerson,
         checkType,
         text: messageText,
         analysis,
       });
+      draftRowId = messageCheckRowId;
 
       const saved = await updatePerson({
         ...selectedPerson,
@@ -151,12 +159,59 @@ export default function LineCheckPane({
         cautions: analysis.caution,
         additionalMemo: [selectedPerson.additionalMemo, memo].filter(Boolean).join('\n\n'),
       });
-      onPersonUpdated(saved);
+
+      // 送信前チェック等は「送信イベント」、受信文は「受信イベント」として台帳に記録する。
+      // AI温度感ラベルを相手の反応として台帳に残す（数値スコアには変換しない）。
+      const isOutbound = checkType === '送信前チェック' || checkType === '紹介依頼文' || checkType === 'お礼文' || checkType === '返信作成';
+      const reaction = reactionFromTemperatureLabel(analysis.temperature.label);
+      const event = await recordReactionEvent({
+        person: saved,
+        action: isOutbound ? 'message_sent' : 'message_received',
+        reaction,
+        title: `文面確認（${checkType}）を保存`,
+        summary: `温度感：${analysis.temperature.label}。${analysis.judgement.slice(0, 120)}`,
+        sourceType: 'message_check',
+        sourceId: messageCheckRowId,
+      });
+
+      // 受信文からもdata_gapsを更新する（確認できた事項をresolved、未確認をopenに）
+      const signals = deriveGapSignals(messageText);
+      await resolveGaps(event.saved, signals.resolved);
+      await addOpenGaps(
+        event.saved,
+        signals.stillOpen.map((gapType) => ({
+          gapType,
+          title: GAP_DEFINITIONS[gapType].title,
+          reason: GAP_DEFINITIONS[gapType].reason,
+        })),
+      );
+
+      // saved_to_contact is the commit marker. It is written last so a
+      // partial failure remains visible in end-of-day reconciliation.
+      await markMessageCheckSaved(messageCheckRowId);
+
+      onPersonUpdated(event.saved);
       setSavedNotice(true);
-      Alert.alert('人脈カードに保存しました', 'LINE・DMの内容から抽出した営業データを人脈カードに蓄積しました。');
+      setSaveWarning('');
+      Alert.alert(
+        '人脈カードに保存しました',
+        [
+          'LINE・DMの内容から抽出した営業データを人脈カードに蓄積しました。',
+          `記録した反応：${REACTION_LABELS[reaction]}`,
+        ].join('\n'),
+      );
+      });
     } catch (error) {
-      // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
-      Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '文面確認の保存中にエラーが発生しました。');
+      if (draftRowId) {
+        const warning = '文面確認本体は未処理として保存しました。終業後チェックから再確認できます。';
+        setSavedNotice(true);
+        setSaveWarning(warning);
+        Alert.alert('人脈カードへの反映が未完了です', `${warning}\n${error instanceof Error ? error.message : ''}`);
+      } else {
+        Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '文面確認の保存中にエラーが発生しました。');
+      }
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -165,44 +220,42 @@ export default function LineCheckPane({
   };
 
   const applyLineReminder = async (option: string) => {
-    if (!selectedPerson) {
-      setNotificationOpen(false);
+    if (!selectedPerson || notificationSaving) {
       return;
     }
-
-    setNotificationOpen(false);
-
-    if (option === '通知なし') {
-      await cancelContactNotification(selectedPerson.notificationId);
-      const saved = await updatePerson({
-        ...selectedPerson,
-        notificationId: undefined,
-      });
-      onPersonUpdated(saved);
-      Alert.alert('通知なしにしました', '次回連絡通知は設定されていません。');
-      return;
-    }
-
-    const days = option.includes('明日') ? 1 : option.includes('1週間') ? 7 : 3;
-    const date = new Date();
-    date.setDate(date.getDate() + days);
-    date.setHours(9, 0, 0, 0);
-
-    let notificationId = selectedPerson.notificationId;
-    let notice = `${formatDateTime(date.toISOString())} に${selectedPerson.name}への連絡通知を設定しました。`;
+    setNotificationSaving(true);
     try {
-      notificationId = await scheduleContactNotification(selectedPerson, date);
-    } catch {
-      notice = `次回連絡日を ${formatDateTime(date.toISOString())} に設定しました（通知は設定できませんでした）。`;
-    }
+      if (option === '通知なし') {
+        await cancelContactNotification(selectedPerson.notificationId);
+        const saved = await updatePerson({ ...selectedPerson, notificationId: undefined });
+        onPersonUpdated(saved);
+        setNotificationOpen(false);
+        Alert.alert('通知なしにしました', '次回連絡通知は設定されていません。');
+        return;
+      }
 
-    const saved = await updatePerson({
-      ...selectedPerson,
-      nextContactAt: date.toISOString(),
-      notificationId,
-    });
-    onPersonUpdated(saved);
-    Alert.alert('通知を設定しました', notice);
+      const days = option.includes('明日') ? 1 : option.includes('1週間') ? 7 : 3;
+      const date = new Date();
+      date.setDate(date.getDate() + days);
+      date.setHours(9, 0, 0, 0);
+
+      let notificationId = selectedPerson.notificationId;
+      let notice = `${formatDateTime(date.toISOString())} に${selectedPerson.name}への連絡通知を設定しました。`;
+      try {
+        notificationId = await scheduleContactNotification(selectedPerson, date);
+      } catch {
+        notice = `次回連絡日を ${formatDateTime(date.toISOString())} に設定しました（通知は設定できませんでした）。`;
+      }
+
+      const saved = await updatePerson({ ...selectedPerson, nextContactAt: date.toISOString(), notificationId });
+      onPersonUpdated(saved);
+      setNotificationOpen(false);
+      Alert.alert('通知を設定しました', notice);
+    } catch (error) {
+      Alert.alert('通知設定に失敗しました', error instanceof Error ? error.message : 'もう一度お試しください。');
+    } finally {
+      setNotificationSaving(false);
+    }
   };
 
   if (people.length === 0) {
@@ -222,8 +275,8 @@ export default function LineCheckPane({
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <View style={styles.paneHeaderRow}>
         <View style={styles.paneHeaderText}>
-          <Text style={styles.paneTitle}>受信文チェック</Text>
-          <Text style={styles.paneSubcopy}>相手の返信を貼るだけで、返信・保存・次アクションまで整理する</Text>
+          <Text style={styles.paneTitle}>文面確認</Text>
+          <Text style={styles.paneSubcopy}>文面を貼るだけで種類を判定し、返信・保存・次アクションまで整理する</Text>
         </View>
         <View style={styles.paneHeaderActions}>
           <Pressable style={styles.smallOutlineButton} onPress={() => onOpenPerson(selectedPerson?.id)}>
@@ -238,7 +291,12 @@ export default function LineCheckPane({
             <Text style={styles.selectedSummaryLabel}>選択中</Text>
             <Text style={styles.selectedSummaryName}>{selectedPerson.name}</Text>
             <Text style={styles.selectedSummaryMeta}>
-              {selectedPerson.industry} / {selectedPerson.categories.join(' / ')}
+              {[
+                [selectedPerson.company, selectedPerson.role].filter(Boolean).join('・'),
+                `${selectedPerson.industry} / ${selectedPerson.categories.join(' / ')}`,
+              ]
+                .filter(Boolean)
+                .join('｜')}
             </Text>
             <Text style={styles.selectedSummaryAction}>次アクション：{selectedPerson.nextAction}</Text>
           </View>
@@ -249,99 +307,49 @@ export default function LineCheckPane({
         </Pressable>
       </Section>
 
-      <Modal visible={personPickerOpen} transparent animationType="slide" onRequestClose={() => setPersonPickerOpen(false)}>
-        <View style={styles.sheetBackdrop}>
-          <View style={styles.personPickerSheet}>
-            <View style={styles.sheetHeader}>
-              <View>
-                <Text style={styles.sheetTitle}>相手を検索</Text>
-                <Text style={styles.sheetSubcopy}>名前・業種・メモで検索できます。</Text>
-              </View>
-              <Pressable style={styles.sheetCloseButton} onPress={() => setPersonPickerOpen(false)}>
-                <Text style={styles.sheetCloseText}>閉じる</Text>
-              </Pressable>
-            </View>
+      <ContactPickerModal
+        visible={personPickerOpen}
+        people={candidates}
+        selectedPersonId={selectedPerson?.id}
+        onClose={() => setPersonPickerOpen(false)}
+        filter={{
+          options: LINE_PERSON_FILTERS,
+          initial: '最近やり取り',
+          matches: (person, option) => matchesLinePersonFilter(person, option as LinePersonFilter),
+        }}
+        onSelect={(person) => {
+          if (person) {
+            setSelectedPersonId(person.id);
+            resetResult();
+          }
+          setPersonPickerOpen(false);
+        }}
+      />
 
-            <View style={styles.searchBox}>
-              <Search color="#64748B" size={18} />
-              <TextInput
-                value={personQuery}
-                onChangeText={setPersonQuery}
-                placeholder="名前・業種・メモで検索"
-                placeholderTextColor="#94A3B8"
-                style={styles.searchInput}
-              />
-            </View>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
-              {LINE_PERSON_FILTERS.map((item) => (
-                <FilterChip key={item} label={item} selected={personFilter === item} onPress={() => setPersonFilter(item)} />
-              ))}
-            </ScrollView>
-
-            <Text style={styles.resultHint}>候補 {filteredCandidates.length}件</Text>
-            <ScrollView style={styles.personPickerList} showsVerticalScrollIndicator={false}>
-              {filteredCandidates.map((person) => {
-                const selected = person.id === selectedPerson?.id;
-                return (
-                  <Pressable
-                    key={person.id}
-                    style={[styles.personSelectCard, selected && styles.personSelectCardActive]}
-                    onPress={() => {
-                      setSelectedPersonId(person.id);
-                      resetResult();
-                      setPersonPickerOpen(false);
-                    }}
-                  >
-                    <View style={styles.personSelectTop}>
-                      <Text style={styles.personSelectName}>{person.name}</Text>
-                      {selected ? <Text style={styles.selectedMark}>選択中</Text> : null}
-                    </View>
-                    <Text style={styles.personSelectMeta}>
-                      {person.industry}｜{getLinePersonStatus(person)}｜{person.categories[0]}
-                    </Text>
-                    <Text style={styles.personSelectAction}>次アクション：{person.nextAction}</Text>
-                  </Pressable>
-                );
-              })}
-              {filteredCandidates.length === 0 ? (
-                <View style={styles.emptyPickerState}>
-                  <Text style={styles.emptyTitle}>候補が見つかりません。</Text>
-                  <Text style={styles.emptyText}>名前、業種、メモ本文、次アクションの一部で検索してみてください。</Text>
-                </View>
-              ) : null}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      <Section title="チェック種別" subtitle="基本は受信文チェックのままでOK。必要な時だけ切り替えます。">
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
-          {LINE_CHECK_TYPES.map((item) => (
-            <FilterChip
-              key={item}
-              label={item}
-              selected={checkType === item}
-              onPress={() => {
-                setCheckType(item);
-                resetResult();
-              }}
-            />
-          ))}
-        </ScrollView>
-        <Text style={styles.guidanceText}>{typeGuide}</Text>
-      </Section>
-
-      <Section title="相手から来た文を貼る" subtitle="LINE・DM・メールの返信をそのまま貼ります。スクショや音声メモは、内容を雑に書けばOKです。">
+      <Section title="文面を貼る" subtitle="送る文でも、相手から届いた文でも、そのまま貼ってください。種類はAI用の内部処理で自動判定します。">
         <AttachmentTextInput
           value={messageText}
           onChangeText={(value) => {
             setMessageText(value);
             resetResult();
           }}
-          placeholder="例：相手から「最近はリピート率が課題ですね。新規は来るけど続かないです」と返信が来た。"
+          placeholder="例：相手から「今は忙しいので、またタイミングが合えば」と返信が来た。"
           minHeight={132}
         />
+        <Text style={styles.fieldLabel}>何をしたいか（任意）</Text>
+        <TextInput
+          value={intention}
+          onChangeText={(value) => { setIntention(value); resetResult(); }}
+          placeholder="例：深追いせず、関係を残す返信を作りたい"
+          placeholderTextColor="#94A3B8"
+          style={styles.compactTextInput}
+        />
+        {messageText.trim() ? (
+          <View style={styles.referenceSummaryCard}>
+            <Text style={styles.referenceSummaryTitle}>AI判定：{detectedType.label}</Text>
+            <Text style={styles.referenceSummaryText}>{detectedType.reason}</Text>
+          </View>
+        ) : null}
       </Section>
 
       <Section title="参照している人脈情報" subtitle="文面だけで判断せず、人脈カードの情報と合わせてナビを出します。">
@@ -380,7 +388,7 @@ export default function LineCheckPane({
         </Section>
       ) : analysis ? (
         <>
-          <Section title="AIの結論" subtitle={`${selectedPerson?.name ?? '相手未選択'} / ${checkType}`}>
+          <Section title="AIの結論" subtitle={`${selectedPerson?.name ?? '相手未選択'} / ${detectedType.label}`}>
             <LineResultCard title="今どう返すか" body={analysis.judgement} />
             <LineResultCard title="返信文案" body={analysis.replyDraft} />
             <LineResultCard title="次にやること" body={`${analysis.nextAction}\n次回連絡：${analysis.nextContact}`} />
@@ -396,12 +404,16 @@ export default function LineCheckPane({
             <LineResultCard title="抽出された情報" body={analysis.extracted.map((item) => `・${item.label}：${item.value}`).join('\n')} />
             <LineResultCard title="注意点" body={analysis.caution} />
             <LineResultCard title="営業フィードバック" body={`良い点：${analysis.feedbackGood}\n改善点：${analysis.feedbackImprove}`} />
+            <LineResultCard title="確認済み事実" body={analysis.grounding?.confirmedFacts.map((item) => `・${item}`).join('\n') || 'なし'} />
+            <LineResultCard title="仮説（未確定）" body={analysis.grounding?.hypotheses.map((item) => `・${item}`).join('\n') || 'なし'} />
+            <LineResultCard title="未確認事項" body={analysis.grounding?.unknowns.map((item) => `・${item}`).join('\n') || 'なし'} />
           </Section>
 
           <Section title="保存・連携" subtitle="分析した内容を人脈カード、後メモ、通知、営業コーチに流します。">
             <View style={styles.primaryActionStack}>
-              <Pressable style={styles.primaryCtaWide} onPress={saveToPersonCard}>
-                <Text style={styles.primaryCtaText}>人脈カードに保存</Text>
+              <Pressable style={[styles.primaryCtaWide, (saving || savedNotice) && styles.buttonDisabled]} onPress={saveToPersonCard} disabled={saving || savedNotice}>
+                {saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
+                <Text style={styles.primaryCtaText}>{saving ? '保存中...' : savedNotice ? '人脈カード保存済み' : '人脈カードに保存'}</Text>
               </Pressable>
               <View style={styles.inlineActions}>
                 <Pressable style={styles.secondaryCta} onPress={sendToAfterMemo}>
@@ -420,7 +432,8 @@ export default function LineCheckPane({
                 </Pressable>
               </View>
             </View>
-            {savedNotice ? <Text style={styles.successNotice}>人脈カードに保存しました</Text> : null}
+            {savedNotice && !saveWarning ? <Text style={styles.successNotice}>人脈カードに保存しました</Text> : null}
+            {saveWarning ? <Text style={styles.errorNotice}>{saveWarning}</Text> : null}
             {copyNotice ? <Text style={styles.successNotice}>{copyNotice}</Text> : null}
           </Section>
         </>
@@ -443,8 +456,13 @@ export default function LineCheckPane({
               </Pressable>
             </View>
             {LINE_NOTICE_OPTIONS.map((option) => (
-              <Pressable key={option} style={styles.personSelectCard} onPress={() => applyLineReminder(option)}>
-                <Text style={styles.personSelectName}>{option}</Text>
+              <Pressable
+                key={option}
+                disabled={notificationSaving}
+                style={[styles.personSelectCard, notificationSaving && styles.buttonDisabled]}
+                onPress={() => void applyLineReminder(option)}
+              >
+                <Text style={styles.personSelectName}>{notificationSaving ? '保存中...' : option}</Text>
               </Pressable>
             ))}
           </View>

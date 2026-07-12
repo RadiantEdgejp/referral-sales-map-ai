@@ -74,13 +74,6 @@ export function createMockAnalysis(memo: string): PersonAnalysis {
   if (referralTargetSignal) categories.push('紹介先候補');
   if (categories.length === 0) categories.push('将来候補');
 
-  const temperatureScore = temperature === '高' ? 78 : temperature === '低' ? 42 : 62;
-  const customerPotential = customerSignal ? 62 : temperature === '低' ? 22 : 35;
-  const referrerPotential = referralSignal ? 80 : 48;
-  const referralTargetPotential = referralTargetSignal ? 72 : 38;
-  const informationValue = pain ? 78 : 55;
-  const futurePotential = temperature === '低' ? 68 : 58;
-
   const contactDays = temperature === '高' ? 1 : temperature === '低' ? 7 : 3;
   const recommended = new Date();
   recommended.setDate(recommended.getDate() + contactDays);
@@ -110,12 +103,6 @@ export function createMockAnalysis(memo: string): PersonAnalysis {
     industry: industry.label,
     relationship,
     categories,
-    temperatureScore,
-    customerPotential,
-    referrerPotential,
-    referralTargetPotential,
-    informationValue,
-    futurePotential,
     openingTalk: `${industry.topic}の${painTopic}について聞く`,
     nextQuestion,
     goal,

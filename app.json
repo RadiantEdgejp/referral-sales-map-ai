@@ -3,13 +3,16 @@
     "name": "referral-sales-map-ai",
     "slug": "referral-sales-map-ai",
     "version": "1.0.0",
+    "scheme": "referralsalesmapai",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "jp.radiantedge.referralsalesmapai"
     },
     "android": {
+      "package": "jp.radiantedge.referralsalesmapai",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -22,7 +25,8 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-notifications"
     ]
   }
 }

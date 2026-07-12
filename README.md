@@ -1,119 +1,141 @@
 # 紹介営業マップAI
 
-紹介営業マン向けのスマホアプリUIプロトタイプです。
+紹介営業で得た人物情報、予定、会話前の質問、会話後メモ、文面、次の行動を一人の人脈カードへ蓄積する Expo React Native アプリです。
 
-紹介された人や出会った人を「この人は違うな」で終わらせず、人脈を営業資産として分類し、次に何を聞き、どう関係を進めるべきかを見える化します。
+## 現在の構成
 
-## 今回作った範囲
-
-- Expo React Native + TypeScript のスマホアプリ
-- ホーム兼人脈カード一覧画面
-- 人物追加画面
-- 人物詳細画面
-- 営業コーチチャット画面
-- サンプル入力
-- モックAI分析
-- ローカル保存
-- 名前・業種・分類・メモ本文での検索
-- 分類フィルター
-- 業種フィルター
-- 次回連絡日のローカル通知
-
-まだ以下は入れていません。
-
-- Supabase
-- 本物のAI API
-- ログイン
-- クラウド同期
+- Expo / React Native / TypeScript
+- Supabase Auth（登録、ログイン、セッション復元、ログアウト）
+- Supabase PostgreSQL、RLS、ユーザー別データ分離
+- 予定 → 予定前ナビ → 後メモ → 人脈カード更新 → 終業後チェック
+- Ollama `gemma3:latest`（予定前ナビ、後メモ、文面確認、営業コーチ）
+- Mock AIへの明示切替
+- Expoローカル通知
+- Web、Android、iOSを同じコードから提供
 
 ## 必要なもの
 
-先に以下を入れてください。
+- Node.js 22
+- npm 10以上
+- Supabaseプロジェクト
+- AIを使う場合はOllamaと`gemma3:latest`
+- 実機確認にはExpo Go、またはEAS development build
 
-- Node.js
-- Expo Goアプリ
-  - iPhoneの場合: App Storeからインストール
-  - Androidの場合: Google Playからインストール
+## セットアップ
 
-## 初回セットアップ
-
-このフォルダに移動します。
-
-```bash
+```powershell
+git clone https://github.com/RadiantEdgejp/referral-sales-map-ai.git
 cd referral-sales-map-ai
+npm.cmd ci
+Copy-Item .env.example .env.local
 ```
 
-ライブラリをインストールします。
+`.env.local`へ自分のSupabase URLとanon keyを設定します。`service_role`キーはフロントへ置かないでください。
 
-```bash
-npm install
+```dotenv
+EXPO_PUBLIC_SUPABASE_URL=https://PROJECT.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_ANON_KEY
+EXPO_PUBLIC_LLM_PROVIDER=ollama
+EXPO_PUBLIC_OLLAMA_URL=http://127.0.0.1:11434
+EXPO_PUBLIC_OLLAMA_MODEL=gemma3:latest
 ```
 
-PowerShellで `npm` が止まる場合は、代わりにこちらを使ってください。
+`.env.local`、βテスター資格情報、Tunnel URL、実行ログはGit管理外です。
+
+## Supabase DB
+
+SQLは[`supabase/migrations`](supabase/migrations)をファイル名順に適用します。新規環境ではSupabase CLIをリンクして実行します。
 
 ```powershell
-npm.cmd install
+npx.cmd supabase login
+npx.cmd supabase link --project-ref YOUR_PROJECT_REF
+npx.cmd supabase db push
 ```
 
-## 起動方法
+適用後に確認すること：
 
-```bash
-npx expo start
-```
+- publicテーブルのRLSが有効
+- anonでは営業データを取得できない
+- authenticatedユーザーは自分の`user_id`だけ取得・更新できる
+- `create_scheduled_sales_flow`などのRPCをanonが実行できない
 
-PowerShellで `npx` が止まる場合はこちらです。
+本番DBへ未確認SQLを直接貼らず、先にテスト用Supabaseで検証してください。
+
+## Ollama
 
 ```powershell
-npx.cmd expo start
+ollama pull gemma3:latest
+ollama serve
 ```
 
-起動するとQRコードが表示されます。
+PCブラウザでは`EXPO_PUBLIC_OLLAMA_URL=http://127.0.0.1:11434`を使えます。外部スマホの一時βではOllamaの11434番を公開せず、同一オリジンproxyを使います。
 
-スマホでExpo Goを開き、QRコードを読み込むとアプリを確認できます。
+OllamaなしでUI・保存フローを確認する場合：
 
-## PCブラウザで確認する方法
-
-PCでも画面を確認したい場合は、Web版として起動します。
-
-```bash
-npx expo start --web
+```dotenv
+EXPO_PUBLIC_LLM_PROVIDER=mock
 ```
 
-PowerShellで `npx` が止まる場合はこちらです。
+Ollama接続失敗時に自動でmockへ戻ることはありません。AI失敗を成功として保存しないためです。
+
+## 起動
 
 ```powershell
-npx.cmd expo start --web
+npm.cmd start
+npm.cmd run web
+npm.cmd run android
+npm.cmd run ios
 ```
 
-起動後、ブラウザで表示されたURLを開いてください。通常は `http://localhost:8081` または表示されたポート番号のURLです。
+PowerShellでは`npm`ではなく`npm.cmd`を使うと実行ポリシーの影響を避けられます。
 
-## 使い方
+## デモデータ
 
-1. ホーム画面で「人物追加」を押す
-2. 「サンプル入力」を押す
-3. 「AIで整理する」を押す
-4. 分析結果プレビューを確認する
-5. 「保存する」を押す
-6. ホーム画面の人脈カード一覧に表示される
-7. カードを押して人物詳細を見る
-8. 次回連絡日時を選び、通知を設定する
-9. 営業コーチ画面で悩みを入力し、仮回答を見る
+ログイン後、設定画面の「デモ人物を追加」から追加できます。既存の同じIDの人物は上書きしません。実データがあるユーザーで一括リセットを実行しないでください。
 
-## 通知について
+## 自動検証
 
-通知機能は `expo-notifications` を使っています。
+```powershell
+npm.cmd run typecheck
+npm.cmd test
+npm.cmd run doctor
+npm.cmd run audit:security
+npm.cmd run export:web
+npm.cmd run export:android
+npm.cmd run export:ios
+```
 
-初回の通知設定時に、スマホ側で通知許可を求められます。許可しないと通知は出ません。
+GitHub Actionsの`Quality`も同じ検証をNode 22・日本時間で実行します。
 
-通知の確認は実機で行ってください。Expo GoやOSの設定によって、通知の出方が変わる場合があります。
+実Supabase E2Eは[`tests/e2e`](tests/e2e)にあります。テスト用プロジェクトでメール自動確認を有効にし、次を設定して個別に実行します。
 
-## 今後追加するとよいもの
+```powershell
+$env:SUPABASE_TEST_URL='https://TEST.supabase.co'
+$env:SUPABASE_TEST_ANON_KEY='TEST_ANON_KEY'
+node tests/e2e/coreSalesFlow.local.mjs
+node tests/e2e/endOfDay.local.mjs
+node tests/e2e/issue19UiStorage.local.mjs
+```
 
-- 本物のAI分析API接続
-- Supabaseでのデータ保存
-- ログイン
-- 人物カードの編集・削除
-- 通知一覧
-- 営業コーチの履歴保存
-- 分析結果の手動修正
-- 紹介元・紹介先の関係マップ表示
+共有本番プロジェクトで自動反復するとテストAuthユーザーが残るため禁止です。
+
+## 障害時の確認
+
+1. 画面の再試行を押す
+2. Supabase Dashboardで対象テーブル、RLS、APIログを確認する
+3. Ollama利用時は`ollama list`と11434の疎通を確認する
+4. 保存処理を連打しない。未確定の文面確認は終業後チェックに表示される
+5. migration障害時は新しい破壊的SQLを重ねず、直前のGit commitとDBバックアップを確認する
+
+アプリはSupabase失敗時にlocalStorageへ黙ってフォールバックしません。
+
+## リリース
+
+`eas.json`にdevelopment、preview、productionプロファイルがあります。
+
+```powershell
+npx.cmd eas-cli build --profile preview --platform android
+npx.cmd eas-cli build --profile preview --platform ios
+```
+
+署名資格情報、ストア情報、プライバシー表示、問い合わせ先を確認してからproduction buildを作成してください。

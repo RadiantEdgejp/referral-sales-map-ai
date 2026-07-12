@@ -31,6 +31,9 @@ export default function PersonCard({ person, onPress, onLinePress, onNotifyPress
       <View style={styles.header}>
         <View style={styles.nameBlock}>
           <Text style={styles.name}>{person.name}</Text>
+          {person.company || person.role ? (
+            <Text style={styles.companyMeta}>{[person.company, person.role].filter(Boolean).join('・')}</Text>
+          ) : null}
           <Text style={styles.meta}>
             {person.industry} / {person.relationship}
           </Text>
@@ -57,11 +60,6 @@ export default function PersonCard({ person, onPress, onLinePress, onNotifyPress
       <InfoLine label="次アクション" value={person.nextAction} />
       <InfoLine label="次回連絡" value={formatDateTime(person.nextContactAt)} />
 
-      <View style={styles.scoreGrid}>
-        <ScorePill label="紹介元可能性" value={person.referrerPotential} />
-        <ScorePill label="顧客可能性" value={person.customerPotential} />
-      </View>
-
       <Text style={styles.cautionLabel}>注意</Text>
       <Text style={styles.caution} numberOfLines={2}>
         {person.cautions}
@@ -84,15 +82,6 @@ function InfoLine({ label, value }: { label: string; value: string }) {
     <View style={styles.infoLine}>
       <Text style={styles.infoLabel}>{label}</Text>
       <Text style={styles.infoValue}>{value}</Text>
-    </View>
-  );
-}
-
-function ScorePill({ label, value }: { label: string; value: number }) {
-  return (
-    <View style={styles.scorePill}>
-      <Text style={styles.scoreLabel}>{label}</Text>
-      <Text style={styles.scoreValue}>{Math.max(1, Math.round(value / 20))}/5</Text>
     </View>
   );
 }
@@ -128,7 +117,7 @@ function getStatusLabel(person: Person) {
   if (isToday) {
     return '今日連絡';
   }
-  if (person.referrerPotential >= 75) {
+  if (person.categories.includes('紹介元候補')) {
     return '紹介候補';
   }
   if (!person.nextContactAt) {
@@ -164,6 +153,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    boxShadow: '0 1px 3px rgba(15, 23, 42, 0.05)',
   },
   pressed: {
     opacity: 0.72,
@@ -216,6 +206,12 @@ const styles = StyleSheet.create({
     fontSize: 19,
     fontWeight: '900',
   },
+  companyMeta: {
+    color: '#153E75',
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 3,
+  },
   meta: {
     color: '#64748B',
     marginTop: 4,
@@ -247,30 +243,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     lineHeight: 21,
     marginTop: 3,
-  },
-  scoreGrid: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  scorePill: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-    borderColor: '#E2E8F0',
-    borderRadius: 8,
-    borderWidth: 1,
-    padding: 10,
-  },
-  scoreLabel: {
-    color: '#64748B',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  scoreValue: {
-    color: '#0F172A',
-    fontSize: 18,
-    fontWeight: '900',
-    marginTop: 2,
   },
   cautionLabel: {
     color: '#7C2D12',

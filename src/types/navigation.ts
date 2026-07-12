@@ -2,6 +2,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { LegalDocKey } from '../legal/legalContent';
 
 export type RootStackParamList = {
+  Onboarding: undefined;
   Home: undefined;
   AddPerson: undefined;
   PersonDetail: { personId: string };

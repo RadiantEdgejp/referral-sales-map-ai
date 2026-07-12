@@ -1,6 +1,7 @@
 import { mockProvider } from './providers/mockProvider';
 import { ollamaProvider } from './providers/ollamaProvider';
 import { LlmError, type LlmAdapter, type LlmProviderName } from './types';
+import { AiSafetyError } from './safety';
 
 /**
  * プロバイダ選択のfacade。
@@ -33,6 +34,9 @@ export function getLlmAdapter(): LlmAdapter {
  */
 export function toLlmErrorMessage(error: unknown): string {
   if (error instanceof LlmError) {
+    return error.message;
+  }
+  if (error instanceof AiSafetyError) {
     return error.message;
   }
   return 'AIの処理中に予期しないエラーが発生しました。時間をおいて再度お試しください。';

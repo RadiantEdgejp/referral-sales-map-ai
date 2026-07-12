@@ -1,17 +1,20 @@
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
+import { buildContactAIContext } from '../../ai/aiContext';
 import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
+import { generateForReview, persistReviewedResult } from '../../ai/reviewWorkflow';
+import { assertPreMeetingSafe } from '../../ai/safety';
 import type { PreMeetingNavigation } from '../../ai/types';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
+import ContactPickerModal from '../../components/ContactPickerModal';
 import FilterChip from '../../components/FilterChip';
 import Info from '../../components/Info';
 import Section from '../../components/Section';
 import { dedupePeople } from '../../logic/personPriority';
 import { getActionGuidance } from '../../logic/preMeetingNav';
 import { savePreMeetingNav } from '../../storage/flowLogStorage';
-import { updatePerson } from '../../storage/personStorage';
 import type { Person } from '../../types/person';
 import { formatDateTime } from '../../utils/date';
 import { homeStyles as styles } from './homeStyles';
@@ -20,6 +23,8 @@ import type { AfterMemoHandoff } from './types';
 export default function PreMeetingPane({
   people,
   initialPersonId,
+  salesRouteId,
+  calendarEventId,
   onAfter,
   onLine,
   onPersonUpdated,
@@ -29,6 +34,8 @@ export default function PreMeetingPane({
 }: {
   people: Person[];
   initialPersonId?: string;
+  salesRouteId?: string;
+  calendarEventId?: string;
   onAfter: (personId?: string, handoff?: AfterMemoHandoff) => void;
   onLine: (personId?: string) => void;
   onPersonUpdated: (person: Person) => void;
@@ -42,13 +49,21 @@ export default function PreMeetingPane({
   const [nav, setNav] = useState<PreMeetingNavigation | null>(null);
   const [navRowId, setNavRowId] = useState<string | undefined>(undefined);
   const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [copyNotice, setCopyNotice] = useState(false);
-  const [personQuery, setPersonQuery] = useState('');
   const [showReferenceDetails, setShowReferenceDetails] = useState(false);
   const [showNavDetails, setShowNavDetails] = useState(false);
   const [personPickerOpen, setPersonPickerOpen] = useState(false);
   const [showMoreNavActions, setShowMoreNavActions] = useState(false);
+
+  useEffect(() => {
+    if (!initialPersonId) return;
+    setSelectedPersonId(initialPersonId);
+    setNav(null);
+    setNavRowId(undefined);
+    setErrorMessage('');
+  }, [calendarEventId, initialPersonId]);
 
   const uniquePeople = useMemo(() => dedupePeople(people), [people]);
   const selectedPerson = useMemo(() => {
@@ -57,19 +72,6 @@ export default function PreMeetingPane({
   }, [initialPersonId, selectedPersonId, uniquePeople]);
 
   const currentPersonId = selectedPerson?.id ?? selectedPersonId;
-  const candidatePeople = useMemo(() => {
-    const normalized = personQuery.trim().toLowerCase();
-    const matches = normalized
-      ? uniquePeople.filter((person) =>
-          [person.name, person.industry, person.relationship, person.categories.join(' '), person.nextAction, person.rawMemo]
-            .join(' ')
-            .toLowerCase()
-            .includes(normalized),
-        )
-      : uniquePeople;
-
-    return dedupePeople(matches).slice(0, 20);
-  }, [personQuery, uniquePeople]);
 
   const generateNav = async () => {
     if (generating) return;
@@ -81,27 +83,21 @@ export default function PreMeetingPane({
     setShowNavDetails(false);
     setShowMoreNavActions(false);
     try {
-      const result = await getLlmAdapter().createPreMeetingNav({
+      // 生成直前にSupabaseから蓄積データ（未解決data_gaps含む）を集約する（CLAUDE.md 6章）。
+      // 「聞くべき質問」はこのcontextの未確認事項を埋める質問として生成される。
+      const context = selectedPerson ? await buildContactAIContext(selectedPerson) : undefined;
+      const input = {
         person: selectedPerson,
         actionType,
         memo,
-      });
-
-      // AI成功時のみ pre_meeting_navs へ永続化する（Issue #17 / CLAUDE.md 4.2）。
-      // 保存に失敗した場合は成功扱いにせず、エラーとして表示する。
-      let savedRowId: string | undefined;
-      if (selectedPerson) {
-        const saved = await savePreMeetingNav({
-          person: selectedPerson,
-          actionType,
-          memo,
-          nav: result,
-        });
-        savedRowId = saved.rowId;
-      }
-
+        context,
+      };
+      const result = await generateForReview(
+        () => getLlmAdapter().createPreMeetingNav(input),
+        (generated) => assertPreMeetingSafe(input, generated),
+      );
       setNav(result);
-      setNavRowId(savedRowId);
+      setNavRowId(undefined);
     } catch (error) {
       // AI失敗・保存失敗時はナビを表示せず、後メモへの引き継ぎもできない状態を維持する
       setNav(null);
@@ -121,38 +117,44 @@ export default function PreMeetingPane({
 
   const goAfterMemo = () => {
     // ナビで決めた質問を後メモへそのまま引き継ぐ（CLAUDE.md 5.4）
-    if (nav && currentPersonId) {
+    if (nav && currentPersonId && navRowId) {
       onAfter(currentPersonId, {
         questions: nav.questions,
         preMeetingNavRowId: navRowId,
         personId: currentPersonId,
+        salesRouteId,
+        calendarEventId,
       });
+      return;
+    }
+    if (nav && !navRowId) {
+      Alert.alert('先にナビを保存してください', '確認したナビを保存すると、同じ質問を後メモへ引き継げます。');
       return;
     }
     onAfter(currentPersonId);
   };
 
-  const saveNavToPersonCard = async () => {
+  const saveNav = async () => {
     if (!selectedPerson || !nav) {
       return;
     }
-
-    const memoLines = [
-      `予定前ナビ（${actionType}）`,
-      `今日の目的：${nav.purpose}`,
-      `今日の到達点：${nav.destination}`,
-      `聞くべき質問：\n${nav.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')}`,
-      `NG行動：\n${nav.ngActions.map((item) => `・${item}`).join('\n')}`,
-      `会話後に記録する項目：\n${nav.recordItems.map((item) => `・${item}`).join('\n')}`,
-      memo.trim() ? `当日の追加メモ：${memo.trim()}` : '',
-    ].filter(Boolean);
-
-    const saved = await updatePerson({
-      ...selectedPerson,
-      additionalMemo: [selectedPerson.additionalMemo, memoLines.join('\n')].filter(Boolean).join('\n\n'),
-    });
-    onPersonUpdated(saved);
-    Alert.alert('予定前ナビを保存しました', `${selectedPerson.name}の人脈カードのメモに蓄積しました。`);
+    if (saving || navRowId) return;
+    setSaving(true);
+    setErrorMessage('');
+    const input = { person: selectedPerson, actionType, memo };
+    try {
+      const saved = await persistReviewedResult(
+        nav,
+        (reviewed) => assertPreMeetingSafe(input, reviewed),
+        () => savePreMeetingNav({ person: selectedPerson, actionType, memo, nav, salesRouteId, calendarEventId }),
+      );
+      setNavRowId(saved.rowId);
+      Alert.alert('予定前ナビを保存しました', '確認したナビと質問を保存しました。後メモへそのまま引き継げます。');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '予定前ナビの保存に失敗しました。');
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (people.length === 0) {
@@ -191,7 +193,12 @@ export default function PreMeetingPane({
             <Text style={styles.selectedSummaryLabel}>選択中</Text>
             <Text style={styles.selectedSummaryName}>{selectedPerson.name}</Text>
             <Text style={styles.selectedSummaryMeta}>
-              {selectedPerson.industry} / {selectedPerson.relationship}
+              {[
+                [selectedPerson.company, selectedPerson.role].filter(Boolean).join('・'),
+                `${selectedPerson.industry} / ${selectedPerson.relationship}`,
+              ]
+                .filter(Boolean)
+                .join('｜')}
             </Text>
             <Text style={styles.selectedSummaryAction}>今日の焦点：{selectedPerson.nextAction}</Text>
           </View>
@@ -203,73 +210,25 @@ export default function PreMeetingPane({
         </Pressable>
       </Section>
 
-      <Modal visible={personPickerOpen} transparent animationType="slide" onRequestClose={() => setPersonPickerOpen(false)}>
-        <View style={styles.sheetBackdrop}>
-          <View style={styles.personPickerSheet}>
-            <View style={styles.sheetHeader}>
-              <View>
-                <Text style={styles.sheetTitle}>相手を検索</Text>
-                <Text style={styles.sheetSubcopy}>名前・業種・関係性・メモから探せます。</Text>
-              </View>
-              <Pressable style={styles.sheetCloseButton} onPress={() => setPersonPickerOpen(false)}>
-                <Text style={styles.sheetCloseText}>閉じる</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.searchBox}>
-              <Search color="#64748B" size={18} />
-              <TextInput
-                value={personQuery}
-                onChangeText={setPersonQuery}
-                placeholder="相手を検索"
-                placeholderTextColor="#94A3B8"
-                style={styles.searchInput}
-              />
-            </View>
-
-            <Text style={styles.resultHint}>候補 {candidatePeople.length}件</Text>
-            <ScrollView style={styles.personPickerList} showsVerticalScrollIndicator={false}>
-              {candidatePeople.length > 0 ? (
-                candidatePeople.map((person) => {
-                  const selected = person.id === currentPersonId;
-                  return (
-                    <Pressable
-                      key={person.id}
-                      style={[styles.personSelectCard, selected && styles.personSelectCardActive]}
-                      onPress={() => {
-                        setSelectedPersonId(person.id);
-                        setNav(null);
-                        setNavRowId(undefined);
-                        setErrorMessage('');
-                        setCopyNotice(false);
-                        setShowReferenceDetails(false);
-                        setShowNavDetails(false);
-                        setShowMoreNavActions(false);
-                        setPersonPickerOpen(false);
-                      }}
-                    >
-                      <View style={styles.personSelectTop}>
-                        <Text style={styles.personSelectName}>{person.name}</Text>
-                        {selected ? <Text style={styles.selectedMark}>選択中</Text> : null}
-                      </View>
-                      <Text style={styles.personSelectMeta}>
-                        {person.industry} / {person.relationship}
-                      </Text>
-                      <Text style={styles.personSelectTags}>分類：{person.categories.join('・')}</Text>
-                      <Text style={styles.personSelectAction}>次アクション：{person.nextAction}</Text>
-                    </Pressable>
-                  );
-                })
-              ) : (
-                <View style={styles.emptyPickerState}>
-                  <Text style={styles.emptyTitle}>候補が見つかりません。</Text>
-                  <Text style={styles.emptyText}>名前、業種、関係性、メモの一部で検索してみてください。</Text>
-                </View>
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      <ContactPickerModal
+        visible={personPickerOpen}
+        people={uniquePeople}
+        selectedPersonId={currentPersonId}
+        onClose={() => setPersonPickerOpen(false)}
+        onSelect={(person) => {
+          if (person) {
+            setSelectedPersonId(person.id);
+            setNav(null);
+            setNavRowId(undefined);
+            setErrorMessage('');
+            setCopyNotice(false);
+            setShowReferenceDetails(false);
+            setShowNavDetails(false);
+            setShowMoreNavActions(false);
+          }
+          setPersonPickerOpen(false);
+        }}
+      />
 
       <Section title="アクション種別を選ぶ">
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
@@ -332,7 +291,12 @@ export default function PreMeetingPane({
       <Section title="今日の追加メモ">
         <AttachmentTextInput
           value={memo}
-          onChangeText={setMemo}
+          onChangeText={(value) => {
+            setMemo(value);
+            setNav(null);
+            setNavRowId(undefined);
+            setErrorMessage('');
+          }}
           placeholder="例：今日13時に会う。採用の話を少し聞きたい。紹介依頼はまだ早そう。相手は忙しそうなので短く聞きたい。"
           minHeight={132}
         />
@@ -368,9 +332,14 @@ export default function PreMeetingPane({
           <View style={styles.questionPreview}>
             <Text style={styles.questionPreviewTitle}>まず聞く質問</Text>
             {nav.questions.slice(0, 2).map((question, index) => (
-              <Text key={question} style={styles.questionPreviewText}>
-                {index + 1}. {question}
-              </Text>
+              <View key={question}>
+                <Text style={styles.questionPreviewText}>
+                  {index + 1}. {question}
+                </Text>
+                {nav.questionReasons[index] ? (
+                  <Text style={styles.questionReasonText}>この質問の理由：{nav.questionReasons[index]}</Text>
+                ) : null}
+              </View>
             ))}
           </View>
 
@@ -381,20 +350,37 @@ export default function PreMeetingPane({
           {showNavDetails ? (
             <>
               <Info label="今日の会話方針" value={nav.policy} />
-              <Info label="聞くべき質問" value={nav.questions.map((question, index) => `${index + 1}. ${question}`).join('\n')} />
+              <Info
+                label="聞くべき質問"
+                value={nav.questions
+                  .map((question, index) => {
+                    const reason = nav.questionReasons[index] ? `\n　└ 理由：${nav.questionReasons[index]}` : '';
+                    return `${index + 1}. ${question}${reason}`;
+                  })
+                  .join('\n')}
+              />
               <Info label="深掘り質問" value={nav.deepQuestions.map((question) => `・${question}`).join('\n')} />
               <Info label="聞いてはいけないこと" value={nav.ngActions.map((item) => `・${item}`).join('\n')} />
               <Info label="売るべきか、聞くべきか" value={nav.sellOrAsk} />
               <Info label="紹介依頼してよいか" value={nav.referralTiming} />
               <Info label="会話後に記録すべき項目" value={nav.recordItems.map((item) => `・${item}`).join('\n')} />
               <Info label="科学的根拠" value={nav.evidence.map((item) => `・${item}`).join('\n')} />
+              <Info label="確認済み事実" value={nav.grounding?.confirmedFacts.map((item) => `・${item}`).join('\n') || 'なし'} />
+              <Info label="仮説（未確定）" value={nav.grounding?.hypotheses.map((item) => `・${item}`).join('\n') || 'なし'} />
+              <Info label="未確認事項" value={nav.grounding?.unknowns.map((item) => `・${item}`).join('\n') || 'なし'} />
             </>
           ) : null}
 
           <View style={styles.primaryActionStack}>
-            <Pressable style={styles.primaryCtaWide} onPress={goAfterMemo}>
-              <Text style={styles.primaryCtaText}>後メモへ進む</Text>
+            <Pressable style={[styles.primaryCtaWide, (saving || Boolean(navRowId)) && styles.buttonDisabled]} onPress={saveNav} disabled={saving || Boolean(navRowId)}>
+              {saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
+              <Text style={styles.primaryCtaText}>{saving ? '保存中...' : navRowId ? 'ナビ保存済み' : '確認したナビを保存'}</Text>
             </Pressable>
+            {navRowId ? (
+              <Pressable style={styles.primaryCtaWide} onPress={goAfterMemo}>
+                <Text style={styles.primaryCtaText}>後メモへ進む</Text>
+              </Pressable>
+            ) : null}
             <View style={styles.inlineActions}>
               <Pressable style={styles.secondaryCta} onPress={copyQuestions}>
                 <Text style={styles.secondaryCtaText}>質問をコピー</Text>
@@ -415,9 +401,6 @@ export default function PreMeetingPane({
               </Pressable>
               <Pressable style={styles.secondaryCta} onPress={() => onOpenCoach(nav.coachPrompt)}>
                 <Text style={styles.secondaryCtaText}>コーチ相談</Text>
-              </Pressable>
-              <Pressable style={styles.secondaryCta} onPress={saveNavToPersonCard}>
-                <Text style={styles.secondaryCtaText}>ナビを保存</Text>
               </Pressable>
             </View>
           ) : null}

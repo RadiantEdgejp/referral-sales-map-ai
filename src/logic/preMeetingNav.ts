@@ -1,4 +1,6 @@
+import type { ContactAIContext } from '../ai/types';
 import type { Person } from '../types/person';
+import { buildFallbackQuestions, GAP_DEFINITIONS, isGapType } from './dataGaps';
 
 export function getActionGuidance(actionType: string) {
   const guidance: Record<string, string> = {
@@ -15,18 +17,30 @@ export function getActionGuidance(actionType: string) {
   return guidance[actionType] ?? '今日の目的に合わせて、聞くことと避けることを整理します。';
 }
 
-export function createPreMeetingNavigation(person: Person | undefined, actionType: string) {
+export function createPreMeetingNavigation(
+  person: Person | undefined,
+  actionType: string,
+  context?: ContactAIContext,
+) {
   const name = person?.name ?? '相手';
   const industry = person?.industry ?? '相手の業界';
   const categories = person?.categories.join('・') ?? '分類未設定';
   const isReferralRequest = actionType === '紹介依頼前';
   const isLine = actionType === 'LINE前' || actionType === '初回連絡前';
 
-  const questions = [
-    `最近、${industry}の方って、集客と採用だとどちらで悩んでいる方が多いですか？`,
-    `${name}の周りの経営者さんも、同じような悩みを持っている方は多いですか？`,
-    'そういう経営者さんって、今どんな人と繋がれると助かりそうですか？',
-  ];
+  // data_gaps駆動の質問生成: 未解決ギャップがあれば、それを埋める質問を優先する。
+  // gapsが空のときのみ関係段階に応じた既定質問へフォールバックし、その旨を根拠に明示する。
+  const openGaps = context && context.contactId === person?.id ? context.openGaps : [];
+  const gapQuestions = openGaps
+    .filter((gap) => isGapType(gap.gapType))
+    .slice(0, 3)
+    .map((gap) => ({
+      question: GAP_DEFINITIONS[gap.gapType as keyof typeof GAP_DEFINITIONS].question(person),
+      reason: `${gap.reason}のため`,
+    }));
+  const questionPairs = [...gapQuestions, ...buildFallbackQuestions(person)].slice(0, 3);
+  const questions = questionPairs.map((pair) => pair.question);
+  const questionReasons = questionPairs.map((pair) => pair.reason);
 
   return {
     purpose: `${industry}の課題を聞き、この人が${categories}として進められるか判断する。`,
@@ -38,6 +52,7 @@ export function createPreMeetingNavigation(person: Person | undefined, actionTyp
       : '売り込みではなく、相手の業界理解と情報交換を優先する。',
     opening: `最近の${industry}まわりでは、集客・採用・人材定着のどこが重いのかを聞く。`,
     questions,
+    questionReasons,
     deepQuestions: [
       'その悩みって、ここ最近強くなっている感じですか？',
       '周りで特に困っている方はいますか？',

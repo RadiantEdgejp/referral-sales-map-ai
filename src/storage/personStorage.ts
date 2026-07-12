@@ -25,15 +25,10 @@ type ContactRow = {
   name: string;
   industry: string;
   relationship: string;
+  company: string | null;
+  role: string | null;
+  introduced_by: string | null;
   classification: PersonCategory[] | null;
-  scores: {
-    temperatureScore?: number;
-    customerPotential?: number;
-    referrerPotential?: number;
-    referralTargetPotential?: number;
-    informationValue?: number;
-    futurePotential?: number;
-  } | null;
   opening_talk: string | null;
   next_question: string | null;
   current_goal: string;
@@ -53,7 +48,7 @@ type ContactRow = {
 };
 
 const CONTACT_COLUMNS =
-  'id,user_id,name,industry,relationship,classification,scores,opening_talk,next_question,' +
+  'id,user_id,name,industry,relationship,company,role,introduced_by,classification,opening_talk,next_question,' +
   'current_goal,required_actions,next_step,line_message,email_message,caution,' +
   'recommended_next_contact_at,notes,additional_memo,next_contact_date,notification_id,' +
   'archived_at,created_at,updated_at';
@@ -81,7 +76,7 @@ export function toContactRowId(userId: string, personId: string): string {
 
 const toRowId = toContactRowId;
 
-function fromRowId(userId: string, rowId: string): string {
+export function fromContactRowId(userId: string, rowId: string): string {
   const prefix = `${userId}:`;
   return rowId.startsWith(prefix) ? rowId.slice(prefix.length) : rowId;
 }
@@ -95,19 +90,15 @@ function toIsoOrNull(value: string | undefined): string | null {
 }
 
 function rowToPerson(userId: string, row: ContactRow): Person {
-  const scores = row.scores ?? {};
   return {
-    id: fromRowId(userId, row.id),
+    id: fromContactRowId(userId, row.id),
     name: row.name,
     industry: row.industry,
     relationship: row.relationship,
+    company: row.company ?? undefined,
+    role: row.role ?? undefined,
+    introducedById: row.introduced_by ? fromContactRowId(userId, row.introduced_by) : undefined,
     categories: row.classification ?? [],
-    temperatureScore: scores.temperatureScore ?? 0,
-    customerPotential: scores.customerPotential ?? 0,
-    referrerPotential: scores.referrerPotential ?? 0,
-    referralTargetPotential: scores.referralTargetPotential ?? 0,
-    informationValue: scores.informationValue ?? 0,
-    futurePotential: scores.futurePotential ?? 0,
     openingTalk: row.opening_talk ?? '',
     nextQuestion: row.next_question ?? '',
     goal: row.current_goal,
@@ -134,15 +125,10 @@ function personToRow(userId: string, person: Person) {
     name: person.name,
     industry: person.industry,
     relationship: person.relationship,
+    company: person.company ?? null,
+    role: person.role ?? null,
+    introduced_by: person.introducedById ? toRowId(userId, person.introducedById) : null,
     classification: person.categories,
-    scores: {
-      temperatureScore: person.temperatureScore,
-      customerPotential: person.customerPotential,
-      referrerPotential: person.referrerPotential,
-      referralTargetPotential: person.referralTargetPotential,
-      informationValue: person.informationValue,
-      futurePotential: person.futurePotential,
-    },
     opening_talk: person.openingTalk,
     next_question: person.nextQuestion,
     current_goal: person.goal,
@@ -174,6 +160,21 @@ export async function getPeople(): Promise<Person[]> {
   }
 
   return ((data ?? []) as unknown as ContactRow[]).map((row) => rowToPerson(userId, row));
+}
+
+export async function getPersonById(personId: string): Promise<Person | null> {
+  const userId = await requireUserId();
+  const { data, error } = await supabase
+    .from('contacts')
+    .select(CONTACT_COLUMNS)
+    .eq('id', toRowId(userId, personId))
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`人物データの取得に失敗しました: ${error.message}`);
+  }
+
+  return data ? rowToPerson(userId, data as unknown as ContactRow) : null;
 }
 
 export async function savePeople(people: Person[]) {

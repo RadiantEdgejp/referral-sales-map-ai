@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { Brain, Save, WandSparkles } from 'lucide-react-native';
@@ -27,6 +28,8 @@ import type { Person, PersonAnalysis } from '../types/person';
 
 export default function AddPersonScreen({ navigation }: ScreenProps<'AddPerson'>) {
   const [memo, setMemo] = useState('');
+  const [company, setCompany] = useState('');
+  const [role, setRole] = useState('');
   const [analysis, setAnalysis] = useState<PersonAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -75,6 +78,9 @@ export default function AddPersonScreen({ navigation }: ScreenProps<'AddPerson'>
       rawMemo: memo,
       createdAt: new Date().toISOString(),
       ...analysis,
+      // 会社名・役職は同姓同名の判別に使うため、独立カラムとして保存する（CLAUDE.md 5.2）
+      company: company.trim() || undefined,
+      role: role.trim() || undefined,
     };
 
     const plan = hasValidNextContact(person.nextContactAt) ? null : buildAutoFollowUpPlan();
@@ -141,6 +147,30 @@ export default function AddPersonScreen({ navigation }: ScreenProps<'AddPerson'>
           minHeight={150}
           backgroundColor="#FFFFFF"
         />
+
+        <View style={styles.fieldRow}>
+          <View style={styles.fieldHalf}>
+            <Text style={styles.label}>会社名（任意）</Text>
+            <TextInput
+              value={company}
+              onChangeText={setCompany}
+              placeholder="例：〇〇美容室"
+              placeholderTextColor="#94A3B8"
+              style={styles.textField}
+            />
+          </View>
+          <View style={styles.fieldHalf}>
+            <Text style={styles.label}>役職（任意）</Text>
+            <TextInput
+              value={role}
+              onChangeText={setRole}
+              placeholder="例：代表"
+              placeholderTextColor="#94A3B8"
+              style={styles.textField}
+            />
+          </View>
+        </View>
+        <Text style={styles.fieldHint}>同じ名前の人を区別するために使います。あとから人物詳細でも編集できます。</Text>
 
         <View style={styles.buttonRow}>
           <Pressable style={[styles.button, styles.secondaryButton]} onPress={fillSample}>
@@ -215,6 +245,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginVertical: 14,
+  },
+  fieldRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  fieldHalf: {
+    flex: 1,
+  },
+  textField: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#D7DEE8',
+    borderRadius: 8,
+    borderWidth: 1,
+    color: '#0F172A',
+    fontSize: 15,
+    minHeight: 46,
+    paddingHorizontal: 12,
+  },
+  fieldHint: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 17,
+    marginTop: 6,
   },
   button: {
     flex: 1,

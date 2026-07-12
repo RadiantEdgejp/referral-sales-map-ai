@@ -14,6 +14,11 @@ const SCREEN_META: Record<MainTab, { screenName: string; title: string; subcopy:
     title: '営業資産データベース',
     subcopy: '人物情報と営業データを育てる',
   },
+  calendar: {
+    screenName: '予定',
+    title: '予定とカレンダー',
+    subcopy: '予定を確認し、会う前の準備へ進む',
+  },
   pre: {
     screenName: '予定前ナビ',
     title: '会う前の作戦確認',

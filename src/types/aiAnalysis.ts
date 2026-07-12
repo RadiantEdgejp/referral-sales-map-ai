@@ -1,4 +1,5 @@
 import type { PersonCategory } from './person';
+import type { AiGrounding } from '../ai/groundingTypes';
 
 export type AiConfidence = 'low' | 'medium' | 'high';
 
@@ -81,11 +82,6 @@ export type QualificationAnalysis = {
   temperature: SalesTemperature;
   relationshipStage: RelationshipStage;
   routeTypes: SalesRouteType[];
-  customerPotential: number;
-  referrerPotential: number;
-  referralTargetPotential: number;
-  informationValue: number;
-  futurePotential: number;
   referralRequestReadiness: {
     canAskNow: boolean;
     reason: string;
@@ -101,14 +97,6 @@ export type PersonCardUpdateProposal = {
   nextQuestion: string;
   nextContactAt: string;
   cautions: string;
-  scores: {
-    temperatureScore: number;
-    customerPotential: number;
-    referrerPotential: number;
-    referralTargetPotential: number;
-    informationValue: number;
-    futurePotential: number;
-  };
   memoToAppend: string;
 };
 
@@ -156,4 +144,13 @@ export type AfterMemoAiSuggestion = {
   lineMessage: string;
   accumulation: string;
   structured?: AfterMemoAiOutput;
+  /**
+   * AIが抽出した「まだ確認できていない重要事項」。
+   * gapType は src/logic/dataGaps.ts の統制語彙に正規化されてから
+   * data_gaps へ保存される（未知の値は捨てる）。
+   */
+  unresolvedGaps?: Array<{ gapType: string; reason?: string }>;
+  /** AIが「今回の会話で確認できた」と判断した gapType（統制語彙） */
+  resolvedGapTypes?: string[];
+  grounding?: AiGrounding;
 };

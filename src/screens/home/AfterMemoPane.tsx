@@ -1,12 +1,22 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { Search } from 'lucide-react-native';
+import { buildContactAIContext } from '../../ai/aiContext';
 import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
+import { generateForReview, persistReviewedResult } from '../../ai/reviewWorkflow';
+import { assertAfterMemoSafe } from '../../ai/safety';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
+import ContactPickerModal from '../../components/ContactPickerModal';
 import Info from '../../components/Info';
 import MemoField from '../../components/MemoField';
 import Section from '../../components/Section';
 import { createAfterMemoQuestions } from '../../logic/afterMemo';
+import { deriveGapSignals, GAP_DEFINITIONS, isGapType, normalizeAiGaps, type GapType } from '../../logic/dataGaps';
+import { recordReactionEvent } from '../../logic/groundedEvents';
+import { inferReactionFromText, REACTION_LABELS } from '../../logic/reactions';
+import { dedupePeople } from '../../logic/personPriority';
 import { scheduleContactNotification } from '../../notifications/notificationService';
+import { addOpenGaps, resolveGaps } from '../../storage/dataGapStorage';
 import { saveAfterMemo } from '../../storage/flowLogStorage';
 import { updatePerson } from '../../storage/personStorage';
 import type { AfterMemoAiSuggestion } from '../../types/aiAnalysis';
@@ -40,7 +50,14 @@ export default function AfterMemoPane({
   onOpenPerson: (personId?: string) => void;
   onCoach: (initialPrompt: string) => void;
 }) {
-  const person = useMemo(() => people.find((item) => item.id === personId) ?? people[0], [people, personId]);
+  const candidates = useMemo(() => dedupePeople(people.filter((item) => !item.archivedAt)), [people]);
+  const [selectedPersonId, setSelectedPersonId] = useState(personId);
+  const [personPickerOpen, setPersonPickerOpen] = useState(false);
+  useEffect(() => { if (personId) setSelectedPersonId(personId); }, [personId]);
+  const person = useMemo(
+    () => candidates.find((item) => item.id === selectedPersonId) ?? candidates[0],
+    [candidates, selectedPersonId],
+  );
   // 予定前ナビからの引き継ぎ質問を最優先で使う（CLAUDE.md 5.4）。
   // 別人物の引き継ぎが残っている場合は使わない（AIContext混入防止）。
   const activeHandoff = handoff && person && handoff.personId === person.id ? handoff : undefined;
@@ -54,12 +71,27 @@ export default function AfterMemoPane({
   const [nextTodo, setNextTodo] = useState('');
   const [suggestion, setSuggestion] = useState<AfterMemoAiSuggestion | null>(null);
   const [organizing, setOrganizing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [showAiDetails, setShowAiDetails] = useState(false);
   const [updatedNotice, setUpdatedNotice] = useState(false);
 
+  const changePerson = (nextPerson: Person) => {
+    setSelectedPersonId(nextPerson.id);
+    setAnswers({});
+    setTalkMemo('');
+    setAllInfoMemo('');
+    setNextTodo('');
+    setSuggestion(null);
+    setErrorMessage('');
+    setUpdatedNotice(false);
+    setPersonPickerOpen(false);
+  };
+
   const setAnswer = (question: string, value: string) => {
     setAnswers((current) => ({ ...current, [question]: value }));
+    setSuggestion(null);
+    setUpdatedNotice(false);
   };
 
   const organizeWithAi = async () => {
@@ -71,13 +103,20 @@ export default function AfterMemoPane({
     setShowAiDetails(false);
     setUpdatedNotice(false);
     try {
-      const result = await getLlmAdapter().analyzeAfterMemo({
+      // 生成直前にSupabaseから蓄積データを集約して注入する（CLAUDE.md 6章）
+      const context = person ? await buildContactAIContext(person) : undefined;
+      const input = {
         person,
         answers,
         talkMemo,
         allInfoMemo,
         nextTodo,
-      });
+        context,
+      };
+      const result = await generateForReview(
+        () => getLlmAdapter().analyzeAfterMemo(input),
+        (generated) => assertAfterMemoSafe(input, generated),
+      );
       setSuggestion(result);
     } catch (error) {
       // AI失敗時は更新案を持たない＝人脈カード更新（DB書き込み）ができない状態を維持する
@@ -89,6 +128,7 @@ export default function AfterMemoPane({
   };
 
   const updatePersonCard = async () => {
+    if (saving || updatedNotice) return;
     if (!person) {
       Alert.alert('人脈カードがありません', '更新対象の人物を選んでください。');
       return;
@@ -110,9 +150,13 @@ export default function AfterMemoPane({
       `AIフィードバック：${suggestion.feedback}`,
     ];
 
+    let coreAfterMemoSaved = false;
     try {
+      setSaving(true);
+      const input = { person, answers, talkMemo, allInfoMemo, nextTodo };
+      await persistReviewedResult(suggestion, (reviewed) => assertAfterMemoSafe(input, reviewed), async () => {
       // 後メモ本体を after_memos に永続化してから、人脈カードへ反映する（Issue #17）
-      await saveAfterMemo({
+      const afterMemoRowId = await saveAfterMemo({
         person,
         questions,
         answers,
@@ -121,7 +165,10 @@ export default function AfterMemoPane({
         nextTodo,
         suggestion,
         preMeetingNavRowId: activeHandoff?.preMeetingNavRowId,
+        salesRouteId: activeHandoff?.salesRouteId,
+        calendarEventId: activeHandoff?.calendarEventId,
       });
+      coreAfterMemoSaved = true;
 
       const saved = await updatePerson({
         ...person,
@@ -131,12 +178,68 @@ export default function AfterMemoPane({
         lineMessage: suggestion.lineMessage,
         additionalMemo: [person.additionalMemo, memoLines.join('\n')].filter(Boolean).join('\n\n'),
       });
-      onPersonUpdated(saved);
+
+      // 面談イベントを台帳へ記録（行動=面談、反応=回答テキストからの決定的推定）。
+      const userInputText = [Object.values(answers).join('\n'), talkMemo, allInfoMemo, nextTodo].join('\n');
+      const reaction = inferReactionFromText(userInputText);
+      const event = await recordReactionEvent({
+        person: saved,
+        action: 'meeting_memo',
+        reaction,
+        title: '面談・会話を後メモとして記録',
+        summary: suggestion.accumulation.slice(0, 200),
+        sourceType: 'after_memo',
+        sourceId: afterMemoRowId,
+      });
+
+      // data_gaps 更新: テキストの決定的シグナル ＋ AI抽出をマージ（統制語彙のみ）
+      const signals = deriveGapSignals(userInputText);
+      const aiResolved = (suggestion.resolvedGapTypes ?? []).filter(isGapType);
+      const resolvedTypes = [...new Set<GapType>([...signals.resolved, ...aiResolved])];
+      const aiOpen = normalizeAiGaps(suggestion.unresolvedGaps);
+      const openTypes = [...new Set<GapType>([...signals.stillOpen, ...aiOpen.map((gap) => gap.gapType)])].filter(
+        (gapType) => !resolvedTypes.includes(gapType),
+      );
+      await resolveGaps(event.saved, resolvedTypes);
+      await addOpenGaps(
+        event.saved,
+        openTypes.map((gapType) => {
+          const aiGap = aiOpen.find((gap) => gap.gapType === gapType);
+          return {
+            gapType,
+            title: GAP_DEFINITIONS[gapType].title,
+            reason: aiGap?.reason ?? GAP_DEFINITIONS[gapType].reason,
+          };
+        }),
+      );
+
+      onPersonUpdated(event.saved);
       setUpdatedNotice(true);
-      Alert.alert('人脈カードを更新しました', '後メモの内容を人脈カードに蓄積しました。');
+      Alert.alert(
+        '人脈カードを更新しました',
+        [
+          '後メモの内容を人脈カードに蓄積しました。',
+          `記録した反応：${REACTION_LABELS[reaction]}`,
+          openTypes.length > 0 ? `未確認事項：${openTypes.map((gapType) => GAP_DEFINITIONS[gapType].title).join('・')}` : '未確認事項はありません。',
+        ].join('\n'),
+      );
+      });
     } catch (error) {
-      // 保存に失敗した場合は成功表示をしない（CLAUDE.md 4.2）
-      Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '後メモの保存中にエラーが発生しました。');
+      if (coreAfterMemoSaved) {
+        // The linked RPC already committed the memo, event, route and task in
+        // one transaction. Do not invite a duplicate retry when only optional
+        // ledger/gap enrichment failed.
+        setUpdatedNotice(true);
+        onPersonUpdated({ ...person, nextAction: suggestion.nextAction });
+        Alert.alert(
+          '後メモ本体は保存済みです',
+          `人物詳細の追加履歴または未確認事項の反映に失敗しました。再読込して内容を確認してください。\n${error instanceof Error ? error.message : ''}`,
+        );
+      } else {
+        Alert.alert('保存に失敗しました', error instanceof Error ? error.message : '後メモの保存中にエラーが発生しました。');
+      }
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -185,6 +288,30 @@ export default function AfterMemoPane({
         </View>
       </View>
 
+      <Section title="相手を選ぶ" subtitle="今日の予定にいない相手も、名前・会社・役職・メモから検索できます。">
+        {person ? (
+          <View style={styles.selectedPersonSummary}>
+            <Text style={styles.selectedSummaryLabel}>選択中</Text>
+            <Text style={styles.selectedSummaryName}>{person.name}</Text>
+            <Text style={styles.selectedSummaryMeta}>{[person.company, person.role, person.relationship].filter(Boolean).join('｜')}</Text>
+          </View>
+        ) : null}
+        <Pressable style={styles.changePersonButton} onPress={() => setPersonPickerOpen(true)}>
+          <Search color="#0F172A" size={18} />
+          <Text style={styles.changePersonText}>相手を検索・変更する</Text>
+        </Pressable>
+      </Section>
+
+      <ContactPickerModal
+        visible={personPickerOpen}
+        people={candidates}
+        selectedPersonId={person?.id}
+        title="後メモを残す相手"
+        subtitle="同姓同名の場合は会社・役職・関係性を確認してください。"
+        onClose={() => setPersonPickerOpen(false)}
+        onSelect={(selected) => { if (selected) changePerson(selected); }}
+      />
+
       <Section title="予定前ナビから引き継ぎ" subtitle="予定前で決めた質問に、会話後すぐ回答を入れます。">
         <View style={styles.afterContextCard}>
           <Text style={styles.afterContextTitle}>{person?.name ?? '人物未選択'}</Text>
@@ -209,15 +336,15 @@ export default function AfterMemoPane({
       </Section>
 
       <Section title="会話で得た情報を全部入れる" subtitle="分類・温度感・次回タイミングはAIが推論します。ここでは素材を漏らさず残します。">
-        <MemoField label="話した内容" value={talkMemo} onChangeText={setTalkMemo} placeholder="会話全体の流れ、相手が強く話していたこと、印象に残った言葉" large />
+        <MemoField label="話した内容" value={talkMemo} onChangeText={(value) => { setTalkMemo(value); setSuggestion(null); setUpdatedNotice(false); }} placeholder="会話全体の流れ、相手が強く話していたこと、印象に残った言葉" large />
         <MemoField
           label="得た情報を全部貼る"
           value={allInfoMemo}
-          onChangeText={setAllInfoMemo}
+          onChangeText={(value) => { setAllInfoMemo(value); setSuggestion(null); setUpdatedNotice(false); }}
           placeholder="課題、背景、周りの人脈、紹介できそうな人、予算感、期限、決裁者、断り理由、温度感、LINEで来た文などを雑に全部"
           large
         />
-        <MemoField label="自分が思う次にやること" value={nextTodo} onChangeText={setNextTodo} placeholder="例：3日以内に採用系の情報を送る / 紹介依頼はまだしない / 次回は固定費の話を聞く" />
+        <MemoField label="自分が思う次にやること" value={nextTodo} onChangeText={(value) => { setNextTodo(value); setSuggestion(null); setUpdatedNotice(false); }} placeholder="例：3日以内に採用系の情報を送る / 紹介依頼はまだしない / 次回は固定費の話を聞く" />
 
         <View style={styles.aiExtractHintCard}>
           <Text style={styles.aiExtractTitle}>AIが抽出する営業データ</Text>
@@ -262,12 +389,16 @@ export default function AfterMemoPane({
               <Info label="次回聞くべき質問" value={suggestion.nextQuestion} />
               <Info label="LINE文案" value={suggestion.lineMessage} />
               <Info label="蓄積する情報" value={suggestion.accumulation} />
+              <Info label="確認済み事実" value={suggestion.grounding?.confirmedFacts.map((item) => `・${item}`).join('\n') || 'なし'} />
+              <Info label="仮説（未確定）" value={suggestion.grounding?.hypotheses.map((item) => `・${item}`).join('\n') || 'なし'} />
+              <Info label="未確認事項" value={suggestion.grounding?.unknowns.map((item) => `・${item}`).join('\n') || 'なし'} />
             </>
           ) : null}
 
           <View style={styles.primaryActionStack}>
-            <Pressable style={styles.primaryCtaWide} onPress={updatePersonCard}>
-              <Text style={styles.primaryCtaText}>人脈カードを更新</Text>
+            <Pressable style={[styles.primaryCtaWide, (saving || updatedNotice) && styles.buttonDisabled]} onPress={updatePersonCard} disabled={saving || updatedNotice}>
+              {saving ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
+              <Text style={styles.primaryCtaText}>{saving ? '保存中...' : updatedNotice ? '人脈カード更新済み' : '人脈カードを更新'}</Text>
             </Pressable>
             <View style={styles.inlineActions}>
               <Pressable style={styles.secondaryCta} onPress={scheduleNextContact}>

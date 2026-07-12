@@ -1,4 +1,4 @@
-export type MainTab = 'home' | 'people' | 'pre' | 'after' | 'line' | 'end';
+export type MainTab = 'home' | 'people' | 'calendar' | 'pre' | 'after' | 'line' | 'end';
 
 /**
  * 予定前ナビ → 後メモへの引き継ぎ情報（CLAUDE.md 5.4:
@@ -11,4 +11,7 @@ export type AfterMemoHandoff = {
   preMeetingNavRowId?: string;
   /** 引き継ぎ元の人物ID（別人物のナビ質問を混ぜないためのガード） */
   personId: string;
+  salesRouteId?: string;
+  calendarEventId?: string;
+  afterMemoTaskId?: string;
 };

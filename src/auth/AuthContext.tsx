@@ -9,11 +9,17 @@ import {
   type ReactNode,
 } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { ensureAndGetProfile, updateProfile, type UserProfile } from '../storage/profileStorage';
 
 type AuthContextValue = {
   /** Restoring the persisted session on app launch. */
   initializing: boolean;
   session: Session | null;
+  profile: UserProfile | null;
+  profileLoading: boolean;
+  profileError: string;
+  reloadProfile: () => Promise<void>;
+  completeOnboarding: (input: { displayName: string; companyName: string; role: string }) => Promise<void>;
   /** True while the user arrived via a password-recovery link. */
   passwordRecovery: boolean;
   clearPasswordRecovery: () => void;
@@ -28,24 +34,34 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
  * fallback for users created before the trigger existed. Failures are logged
  * but do not block sign-in.
  */
-async function ensureProfile(session: Session) {
-  try {
-    const { error } = await supabase.from('profiles').upsert(
-      { id: session.user.id, email: session.user.email ?? null },
-      { onConflict: 'id', ignoreDuplicates: true },
-    );
-    if (error) {
-      console.warn('profiles行の作成に失敗しました:', error.message);
-    }
-  } catch (err) {
-    console.warn('profiles行の作成に失敗しました:', err);
-  }
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [initializing, setInitializing] = useState(true);
   const [session, setSession] = useState<Session | null>(null);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState('');
+
+  const loadProfile = useCallback(async (activeSession: Session | null) => {
+    if (!activeSession) {
+      setProfile(null);
+      setProfileError('');
+      setProfileLoading(false);
+      return;
+    }
+    setProfileLoading(true);
+    setProfileError('');
+    try {
+      setProfile(await ensureAndGetProfile(activeSession.user.id, activeSession.user.email ?? null));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'プロフィールの取得に失敗しました。';
+      console.error('loadProfile:', error);
+      setProfile(null);
+      setProfileError(message);
+    } finally {
+      setProfileLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -57,9 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
         setSession(data.session);
-        if (data.session) {
-          void ensureProfile(data.session);
-        }
+        void loadProfile(data.session);
       })
       .finally(() => {
         if (mounted) {
@@ -76,10 +90,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPasswordRecovery(true);
       }
       if (event === 'SIGNED_IN' && nextSession) {
-        void ensureProfile(nextSession);
+        void loadProfile(nextSession);
       }
       if (event === 'SIGNED_OUT') {
         setPasswordRecovery(false);
+        setProfile(null);
+        setProfileError('');
       }
     });
 
@@ -87,7 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mounted = false;
       subscription.subscription.unsubscribe();
     };
-  }, []);
+  }, [loadProfile]);
 
   const clearPasswordRecovery = useCallback(() => setPasswordRecovery(false), []);
 
@@ -98,9 +114,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const reloadProfile = useCallback(async () => {
+    await loadProfile(session);
+  }, [loadProfile, session]);
+
+  const completeOnboarding = useCallback(async (input: { displayName: string; companyName: string; role: string }) => {
+    if (!session) throw new Error('ログイン情報を確認できません。もう一度ログインしてください。');
+    const saved = await updateProfile(session.user.id, { ...input, onboardingCompleted: true });
+    setProfile(saved);
+  }, [session]);
+
   const value = useMemo(
-    () => ({ initializing, session, passwordRecovery, clearPasswordRecovery, signOut }),
-    [initializing, session, passwordRecovery, clearPasswordRecovery, signOut],
+    () => ({
+      initializing,
+      session,
+      profile,
+      profileLoading,
+      profileError,
+      reloadProfile,
+      completeOnboarding,
+      passwordRecovery,
+      clearPasswordRecovery,
+      signOut,
+    }),
+    [initializing, session, profile, profileLoading, profileError, reloadProfile, completeOnboarding, passwordRecovery, clearPasswordRecovery, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

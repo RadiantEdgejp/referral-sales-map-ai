@@ -1,6 +1,6 @@
 import type { Person } from '../types/person';
 
-export type SortMode = 'priority' | 'nextContact' | 'newest' | 'referrer';
+export type SortMode = 'priority' | 'nextContact' | 'newest';
 
 export type DueState = 'overdue' | 'today' | 'upcoming' | 'unset';
 
@@ -8,7 +8,11 @@ export function dedupePeople(people: Person[]) {
   const unique = new Map<string, Person>();
 
   people.forEach((person) => {
-    const key = [person.name, person.industry, person.relationship].map((value) => value.trim()).join('|');
+    // 会社・役職が異なる同姓同名は別人として扱う（CLAUDE.md 5.2）。
+    // ここで畳んでよいのは全項目が一致する「真の重複」だけ。
+    const key = [person.name, person.company ?? '', person.role ?? '', person.industry, person.relationship]
+      .map((value) => value.trim())
+      .join('|');
     if (!unique.has(key)) {
       unique.set(key, person);
     }
@@ -37,10 +41,6 @@ export function sortPeople(a: Person, b: Person, sortMode: SortMode) {
   if (sortMode === 'newest') {
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   }
-  if (sortMode === 'referrer') {
-    return b.referrerPotential - a.referrerPotential;
-  }
-
   return priorityScore(b) - priorityScore(a);
 }
 
@@ -49,11 +49,13 @@ export function dateValue(value?: string) {
 }
 
 export function priorityScore(person: Person) {
+  // 優先度は「次回連絡日の近さ」を主軸に、次アクションの有無と新しさで補正する。
+  // 恣意的な関係性スコアには依存しない（数値スコアは廃止）。
   const next = person.nextContactAt ? new Date(person.nextContactAt).getTime() : Number.MAX_SAFE_INTEGER;
   const dueBonus = next <= Date.now() + 24 * 60 * 60 * 1000 ? 100 : 0;
   const actionBonus = person.nextAction ? 20 : 0;
   const recentBonus = Math.max(0, 20 - Math.floor((Date.now() - new Date(person.createdAt).getTime()) / 86400000));
-  return dueBonus + person.referrerPotential + actionBonus + recentBonus;
+  return dueBonus + actionBonus + recentBonus;
 }
 
 export function getDueState(person: Person): DueState {
