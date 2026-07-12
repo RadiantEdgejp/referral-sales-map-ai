@@ -459,6 +459,8 @@ export const homeStyles = StyleSheet.create({
     marginBottom: 10,
     padding: 12,
   },
+  fieldLabel: { color: '#334155', fontSize: 12, fontWeight: '900', marginBottom: 6, marginTop: 14 },
+  compactTextInput: { backgroundColor: '#FFFFFF', borderColor: '#CBD5E1', borderRadius: 8, borderWidth: 1, color: '#0F172A', fontSize: 14, minHeight: 46, paddingHorizontal: 12 },
   bottomNav: {
     alignItems: 'center',
     backgroundColor: '#FFFFFF',

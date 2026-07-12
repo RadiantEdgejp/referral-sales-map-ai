@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Search, UserRound } from 'lucide-react-native';
-import { dedupePeople } from '../logic/personPriority';
+import { filterContactCandidates } from '../logic/contactPicker';
 import type { Person } from '../types/person';
 import { formatDateTime } from '../utils/date';
 import FilterChip from './FilterChip';
@@ -66,29 +66,9 @@ export default function ContactPickerModal({
   }, [visible]);
 
   const candidates = useMemo(() => {
-    const active = dedupePeople(people.filter((person) => !person.archivedAt && person.id !== excludePersonId));
-    const normalized = query.trim().toLowerCase();
-
-    return active.filter((person) => {
-      const matchesQuery =
-        !normalized ||
-        [
-          person.name,
-          person.company ?? '',
-          person.role ?? '',
-          person.industry,
-          person.relationship,
-          person.categories.join(' '),
-          person.nextAction,
-          person.rawMemo,
-          person.additionalMemo ?? '',
-        ]
-          .join(' ')
-          .toLowerCase()
-          .includes(normalized);
+    return filterContactCandidates(people, query, excludePersonId).filter((person) => {
       const matchesFilter = !filter || filter.matches(person, activeFilter);
-
-      return matchesQuery && matchesFilter;
+      return matchesFilter;
     });
   }, [people, excludePersonId, query, filter, activeFilter]);
 

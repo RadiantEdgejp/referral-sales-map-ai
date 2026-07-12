@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { Search } from 'lucide-react-native';
 import { buildContactAIContext } from '../../ai/aiContext';
@@ -9,17 +9,14 @@ import { assertMessageCheckSafe } from '../../ai/safety';
 import type { LineCheckAnalysis } from '../../ai/types';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
 import ContactPickerModal from '../../components/ContactPickerModal';
-import FilterChip from '../../components/FilterChip';
 import Section from '../../components/Section';
 import {
-  LINE_CHECK_TYPES,
   LINE_NOTICE_OPTIONS,
   LINE_PERSON_FILTERS,
-  getLineCheckTypeGuide,
   matchesLinePersonFilter,
-  type LineCheckType,
   type LinePersonFilter,
 } from '../../logic/lineCheck';
+import { detectMessageType } from '../../logic/messageTypeDetection';
 import { deriveGapSignals, GAP_DEFINITIONS } from '../../logic/dataGaps';
 import { recordReactionEvent } from '../../logic/groundedEvents';
 import { dedupePeople } from '../../logic/personPriority';
@@ -49,8 +46,8 @@ export default function LineCheckPane({
 }) {
   const [selectedPersonId, setSelectedPersonId] = useState(personId);
   const [personPickerOpen, setPersonPickerOpen] = useState(false);
-  const [checkType, setCheckType] = useState<LineCheckType>('受信文チェック');
   const [messageText, setMessageText] = useState('');
+  const [intention, setIntention] = useState('');
   const [analysis, setAnalysis] = useState<LineCheckAnalysis | null>(null);
   const [checking, setChecking] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -59,13 +56,18 @@ export default function LineCheckPane({
   const [savedNotice, setSavedNotice] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
 
-  const candidates = useMemo(() => dedupePeople(people), [people]);
+  const candidates = useMemo(() => dedupePeople(people.filter((person) => !person.archivedAt)), [people]);
   const currentPersonId = selectedPersonId ?? personId ?? candidates[0]?.id;
   const selectedPerson = useMemo(
     () => candidates.find((person) => person.id === currentPersonId) ?? candidates[0],
     [candidates, currentPersonId],
   );
-  const typeGuide = getLineCheckTypeGuide(checkType);
+  const detectedType = useMemo(() => detectMessageType(messageText, intention), [messageText, intention]);
+  const checkType = detectedType.checkType;
+  const analysisInputText = useMemo(
+    () => [messageText, intention.trim() ? `ユーザーの目的：${intention.trim()}` : ''].filter(Boolean).join('\n'),
+    [messageText, intention],
+  );
 
   const resetResult = () => {
     setAnalysis(null);
@@ -93,7 +95,7 @@ export default function LineCheckPane({
       const input = {
         person: selectedPerson,
         checkType,
-        text: messageText,
+        text: analysisInputText,
         context,
       };
       const result = await generateForReview(
@@ -121,7 +123,7 @@ export default function LineCheckPane({
     if (!selectedPerson || !analysis) return;
 
     const memo = [
-      `文面確認（${checkType}）`,
+      `文面確認（AI判定：${detectedType.label}）`,
       `入力文：${messageText || '未入力'}`,
       `温度感：${analysis.temperature.label} / ${analysis.temperature.reason}`,
       `抽出情報：${analysis.extracted.map((item) => `${item.label}：${item.value}`).join('、')}`,
@@ -134,7 +136,7 @@ export default function LineCheckPane({
 
     try {
       setSaving(true);
-      const input = { person: selectedPerson, checkType, text: messageText };
+      const input = { person: selectedPerson, checkType, text: analysisInputText };
       await persistReviewedResult(analysis, (reviewed) => assertMessageCheckSafe(input, reviewed), async () => {
       // 分析結果を message_checks に永続化してから、人脈カードへ反映する（Issue #17）
       const messageCheckRowId = await saveMessageCheck({
@@ -259,8 +261,8 @@ export default function LineCheckPane({
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <View style={styles.paneHeaderRow}>
         <View style={styles.paneHeaderText}>
-          <Text style={styles.paneTitle}>受信文チェック</Text>
-          <Text style={styles.paneSubcopy}>相手の返信を貼るだけで、返信・保存・次アクションまで整理する</Text>
+          <Text style={styles.paneTitle}>文面確認</Text>
+          <Text style={styles.paneSubcopy}>文面を貼るだけで種類を判定し、返信・保存・次アクションまで整理する</Text>
         </View>
         <View style={styles.paneHeaderActions}>
           <Pressable style={styles.smallOutlineButton} onPress={() => onOpenPerson(selectedPerson?.id)}>
@@ -310,33 +312,30 @@ export default function LineCheckPane({
         }}
       />
 
-      <Section title="チェック種別" subtitle="基本は受信文チェックのままでOK。必要な時だけ切り替えます。">
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterRow}>
-          {LINE_CHECK_TYPES.map((item) => (
-            <FilterChip
-              key={item}
-              label={item}
-              selected={checkType === item}
-              onPress={() => {
-                setCheckType(item);
-                resetResult();
-              }}
-            />
-          ))}
-        </ScrollView>
-        <Text style={styles.guidanceText}>{typeGuide}</Text>
-      </Section>
-
-      <Section title="相手から来た文を貼る" subtitle="LINE・DM・メールの返信をそのまま貼ります。スクショや音声メモは、内容を雑に書けばOKです。">
+      <Section title="文面を貼る" subtitle="送る文でも、相手から届いた文でも、そのまま貼ってください。種類はAI用の内部処理で自動判定します。">
         <AttachmentTextInput
           value={messageText}
           onChangeText={(value) => {
             setMessageText(value);
             resetResult();
           }}
-          placeholder="例：相手から「最近はリピート率が課題ですね。新規は来るけど続かないです」と返信が来た。"
+          placeholder="例：相手から「今は忙しいので、またタイミングが合えば」と返信が来た。"
           minHeight={132}
         />
+        <Text style={styles.fieldLabel}>何をしたいか（任意）</Text>
+        <TextInput
+          value={intention}
+          onChangeText={(value) => { setIntention(value); resetResult(); }}
+          placeholder="例：深追いせず、関係を残す返信を作りたい"
+          placeholderTextColor="#94A3B8"
+          style={styles.compactTextInput}
+        />
+        {messageText.trim() ? (
+          <View style={styles.referenceSummaryCard}>
+            <Text style={styles.referenceSummaryTitle}>AI判定：{detectedType.label}</Text>
+            <Text style={styles.referenceSummaryText}>{detectedType.reason}</Text>
+          </View>
+        ) : null}
       </Section>
 
       <Section title="参照している人脈情報" subtitle="文面だけで判断せず、人脈カードの情報と合わせてナビを出します。">
@@ -375,7 +374,7 @@ export default function LineCheckPane({
         </Section>
       ) : analysis ? (
         <>
-          <Section title="AIの結論" subtitle={`${selectedPerson?.name ?? '相手未選択'} / ${checkType}`}>
+          <Section title="AIの結論" subtitle={`${selectedPerson?.name ?? '相手未選択'} / ${detectedType.label}`}>
             <LineResultCard title="今どう返すか" body={analysis.judgement} />
             <LineResultCard title="返信文案" body={analysis.replyDraft} />
             <LineResultCard title="次にやること" body={`${analysis.nextAction}\n次回連絡：${analysis.nextContact}`} />

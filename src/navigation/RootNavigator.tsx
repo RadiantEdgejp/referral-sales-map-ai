@@ -11,6 +11,7 @@ import CoachChatScreen from '../screens/CoachChatScreen';
 import HomeScreen from '../screens/HomeScreen';
 import PersonDetailScreen from '../screens/PersonDetailScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import OnboardingScreen from '../screens/OnboardingScreen';
 import LegalDocumentScreen from '../screens/legal/LegalDocumentScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
 import ResetPasswordScreen from '../screens/auth/ResetPasswordScreen';
@@ -80,11 +81,11 @@ function LogoutButton() {
 }
 
 export default function RootNavigator() {
-  const { initializing, session, passwordRecovery } = useAuth();
+  const { initializing, session, profile, profileLoading, profileError, reloadProfile, passwordRecovery } = useAuth();
 
   return (
     <NavigationContainer>
-      {initializing ? (
+      {initializing || (session && profileLoading) ? (
         // セッション復元中のスプラッシュ。
         <View style={logoutStyles.splash}>
           <ActivityIndicator size="large" color="#153E75" />
@@ -98,6 +99,17 @@ export default function RootNavigator() {
             options={{ title: 'パスワード再設定' }}
           />
         </AuthStack.Navigator>
+      ) : session && profileError ? (
+        <View style={logoutStyles.splash}>
+          <Text style={logoutStyles.profileError}>{profileError}</Text>
+          <Pressable style={logoutStyles.retryButton} onPress={() => void reloadProfile()}>
+            <Text style={logoutStyles.retryText}>再試行</Text>
+          </Pressable>
+        </View>
+      ) : session && profile && !profile.onboardingCompleted ? (
+        <Stack.Navigator screenOptions={screenOptions}>
+          <Stack.Screen name="Onboarding" component={OnboardingScreen} options={{ title: '最初の設定', headerBackVisible: false }} />
+        </Stack.Navigator>
       ) : session ? (
         <Stack.Navigator screenOptions={screenOptions}>
           <Stack.Screen
@@ -170,4 +182,7 @@ const logoutStyles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 12,
   },
+  profileError: { color: '#B91C1C', fontWeight: '800', marginHorizontal: 24, textAlign: 'center' },
+  retryButton: { backgroundColor: '#153E75', borderRadius: 8, marginTop: 16, paddingHorizontal: 20, paddingVertical: 12 },
+  retryText: { color: '#FFFFFF', fontWeight: '900' },
 });

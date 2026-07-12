@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { Search } from 'lucide-react-native';
 import { buildContactAIContext } from '../../ai/aiContext';
 import { getLlmAdapter, toLlmErrorMessage } from '../../ai/llmAdapter';
 import { generateForReview, persistReviewedResult } from '../../ai/reviewWorkflow';
 import { assertAfterMemoSafe } from '../../ai/safety';
 import AttachmentTextInput from '../../components/AttachmentTextInput';
+import ContactPickerModal from '../../components/ContactPickerModal';
 import Info from '../../components/Info';
 import MemoField from '../../components/MemoField';
 import Section from '../../components/Section';
@@ -12,6 +14,7 @@ import { createAfterMemoQuestions } from '../../logic/afterMemo';
 import { deriveGapSignals, GAP_DEFINITIONS, isGapType, normalizeAiGaps, type GapType } from '../../logic/dataGaps';
 import { recordReactionEvent } from '../../logic/groundedEvents';
 import { inferReactionFromText, REACTION_LABELS } from '../../logic/reactions';
+import { dedupePeople } from '../../logic/personPriority';
 import { scheduleContactNotification } from '../../notifications/notificationService';
 import { addOpenGaps, resolveGaps } from '../../storage/dataGapStorage';
 import { saveAfterMemo } from '../../storage/flowLogStorage';
@@ -47,7 +50,14 @@ export default function AfterMemoPane({
   onOpenPerson: (personId?: string) => void;
   onCoach: (initialPrompt: string) => void;
 }) {
-  const person = useMemo(() => people.find((item) => item.id === personId) ?? people[0], [people, personId]);
+  const candidates = useMemo(() => dedupePeople(people.filter((item) => !item.archivedAt)), [people]);
+  const [selectedPersonId, setSelectedPersonId] = useState(personId);
+  const [personPickerOpen, setPersonPickerOpen] = useState(false);
+  useEffect(() => { if (personId) setSelectedPersonId(personId); }, [personId]);
+  const person = useMemo(
+    () => candidates.find((item) => item.id === selectedPersonId) ?? candidates[0],
+    [candidates, selectedPersonId],
+  );
   // 予定前ナビからの引き継ぎ質問を最優先で使う（CLAUDE.md 5.4）。
   // 別人物の引き継ぎが残っている場合は使わない（AIContext混入防止）。
   const activeHandoff = handoff && person && handoff.personId === person.id ? handoff : undefined;
@@ -65,6 +75,18 @@ export default function AfterMemoPane({
   const [errorMessage, setErrorMessage] = useState('');
   const [showAiDetails, setShowAiDetails] = useState(false);
   const [updatedNotice, setUpdatedNotice] = useState(false);
+
+  const changePerson = (nextPerson: Person) => {
+    setSelectedPersonId(nextPerson.id);
+    setAnswers({});
+    setTalkMemo('');
+    setAllInfoMemo('');
+    setNextTodo('');
+    setSuggestion(null);
+    setErrorMessage('');
+    setUpdatedNotice(false);
+    setPersonPickerOpen(false);
+  };
 
   const setAnswer = (question: string, value: string) => {
     setAnswers((current) => ({ ...current, [question]: value }));
@@ -250,6 +272,30 @@ export default function AfterMemoPane({
           </Pressable>
         </View>
       </View>
+
+      <Section title="相手を選ぶ" subtitle="今日の予定にいない相手も、名前・会社・役職・メモから検索できます。">
+        {person ? (
+          <View style={styles.selectedPersonSummary}>
+            <Text style={styles.selectedSummaryLabel}>選択中</Text>
+            <Text style={styles.selectedSummaryName}>{person.name}</Text>
+            <Text style={styles.selectedSummaryMeta}>{[person.company, person.role, person.relationship].filter(Boolean).join('｜')}</Text>
+          </View>
+        ) : null}
+        <Pressable style={styles.changePersonButton} onPress={() => setPersonPickerOpen(true)}>
+          <Search color="#0F172A" size={18} />
+          <Text style={styles.changePersonText}>相手を検索・変更する</Text>
+        </Pressable>
+      </Section>
+
+      <ContactPickerModal
+        visible={personPickerOpen}
+        people={candidates}
+        selectedPersonId={person?.id}
+        title="後メモを残す相手"
+        subtitle="同姓同名の場合は会社・役職・関係性を確認してください。"
+        onClose={() => setPersonPickerOpen(false)}
+        onSelect={(selected) => { if (selected) changePerson(selected); }}
+      />
 
       <Section title="予定前ナビから引き継ぎ" subtitle="予定前で決めた質問に、会話後すぐ回答を入れます。">
         <View style={styles.afterContextCard}>
