@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import ContactPickerModal from '../../components/ContactPickerModal';
+import { buildMeetingReminderPlan } from '../../logic/meetingReminders';
+import { scheduleMeetingReminders } from '../../notifications/notificationService';
 import { createScheduledSalesFlow, type SalesFlowIds } from '../../storage/salesFlowStorage';
 import type { Person } from '../../types/person';
 
@@ -63,6 +65,21 @@ export default function ScheduleModal({
         memo: memo.trim(),
         reminderAt: new Date(startAt.getTime() - 60 * 60 * 1000),
       });
+      // 予定前・予定後のルーティン通知はベストエフォート。権限拒否やWeb環境でも
+      // 保存済みの予定フローを巻き添えにしないよう、失敗しても握りつぶす。
+      try {
+        const plan = buildMeetingReminderPlan({
+          now: new Date(),
+          personName: selected.name,
+          personId: selected.id,
+          calendarEventId: flow.calendarEventId,
+          startAt,
+          endAt,
+        });
+        await scheduleMeetingReminders(plan);
+      } catch (notifyError) {
+        console.warn('予定前後リマインダーの予約に失敗しました', notifyError);
+      }
       onSaved(selected, flow, openPreMeeting);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : '予定の保存に失敗しました。');
