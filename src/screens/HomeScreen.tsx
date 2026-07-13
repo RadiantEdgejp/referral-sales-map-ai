@@ -200,6 +200,7 @@ export default function HomeScreen({ navigation }: ScreenProps<'Home'>) {
             onOpenPerson={openPerson}
             onOpenTask={openTask}
             onAddSchedule={() => setScheduleOpen(true)}
+            onAddPerson={() => navigation.navigate('AddPerson')}
             onReload={loadData}
             loading={dataLoading}
             loadError={dataError}
