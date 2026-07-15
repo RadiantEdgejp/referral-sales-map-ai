@@ -3,8 +3,8 @@
  * アプリ内の固定テキストとして保持する。正式リリース時に法務レビュー済みの文面へ差し替える。
  */
 
-/** 問い合わせ・データ削除依頼の窓口（β版ダミー）。 */
-export const CONTACT_EMAIL = 'support@referral-sales-map.example.com';
+/** 問い合わせ・データ削除依頼の窓口。 */
+export const CONTACT_EMAIL = 'radiantedgejp@gmail.com';
 
 export type LegalDocKey = 'terms' | 'privacy' | 'aiNotice';
 
