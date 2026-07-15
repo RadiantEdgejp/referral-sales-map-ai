@@ -2,6 +2,7 @@
   "expo": {
     "name": "referral-sales-map-ai",
     "slug": "referral-sales-map-ai",
+    "owner": "jazz76576575s-team",
     "version": "1.0.0",
     "scheme": "referralsalesmapai",
     "orientation": "portrait",
@@ -28,6 +29,11 @@
       "@react-native-community/datetimepicker",
       "expo-notifications",
       "@sentry/react-native"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f172812e-f7cc-4619-add4-444d3072e6d1"
+      }
+    }
   }
 }
