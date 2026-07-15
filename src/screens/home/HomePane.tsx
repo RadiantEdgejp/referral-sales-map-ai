@@ -1,6 +1,7 @@
 import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
 import MiniButton from '../../components/MiniButton';
 import Section from '../../components/Section';
+import { buildFirstRunGuide, type FirstRunStepKey } from '../../logic/firstRunGuide';
 import { completeActionTask, postponeActionTask, type PersistedActionTask } from '../../storage/actionTaskStorage';
 import { requiresWorkflowSave } from '../../storage/actionTaskCore';
 import type { Person } from '../../types/person';
@@ -39,6 +40,7 @@ export default function HomePane({
   onOpenPerson,
   onOpenTask,
   onAddSchedule,
+  onAddPerson,
   onReload,
   loading,
   loadError,
@@ -50,10 +52,23 @@ export default function HomePane({
   onOpenPerson: (personId?: string) => void;
   onOpenTask: (task: PersistedActionTask) => void;
   onAddSchedule: () => void;
+  onAddPerson: () => void;
   onReload: () => Promise<void>;
   loading: boolean;
   loadError: string;
 }) {
+  const openPreMeetingTask = tasks.find((task) => task.actionType === 'pre_meeting');
+  const guide = buildFirstRunGuide({
+    peopleCount: people.length,
+    eventsCount: events.length,
+    hasOpenPreMeetingTask: Boolean(openPreMeetingTask),
+  });
+  const guideAction = (key: FirstRunStepKey) => {
+    if (key === 'add_person') return onAddPerson();
+    if (key === 'add_schedule') return onAddSchedule();
+    if (openPreMeetingTask) return onOpenTask(openPreMeetingTask);
+  };
+
   const complete = async (task: PersistedActionTask) => {
     try {
       await completeActionTask(task.id);
@@ -88,6 +103,24 @@ export default function HomePane({
         </Section>
       ) : null}
       {loading ? <Text style={styles.emptyText}>最新データを読み込み中...</Text> : null}
+      {!loading && !loadError && guide.visible ? (
+        <Section title="はじめの3ステップ" subtitle="このアプリの価値は、記録が予定前ナビの質問に変わる瞬間に分かります。">
+          {guide.steps.map((step, index) => (
+            <View key={step.key} style={styles.priorityRow} testID={`first-run-step-${step.key}`}>
+              <View style={styles.priorityHeader}>
+                <Text style={styles.priorityBadge}>{step.done ? '完了' : `${index + 1}`}</Text>
+                <Text style={styles.rowName}>{step.title}</Text>
+              </View>
+              <Text style={styles.shortReason}>{step.description}</Text>
+              {step.current ? (
+                <View style={styles.rowButtons}>
+                  <MiniButton label="やってみる" onPress={() => guideAction(step.key)} />
+                </View>
+              ) : null}
+            </View>
+          ))}
+        </Section>
+      ) : null}
       <Section title="今日の営業テーマ">
         <Text style={styles.shortReason}>期限が来ている行動を上から処理し、会話後の情報を人脈カードへ残す。</Text>
         {planUpdated ? <Text style={styles.updatedNotice}>最新のタスクと予定を読み込みました</Text> : null}
